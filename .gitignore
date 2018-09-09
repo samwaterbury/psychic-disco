@@ -1,0 +1,6 @@
+.DS_Store
+.idea/
+sample_submission.csv
+data/train/
+data/test/
+output/

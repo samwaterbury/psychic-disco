@@ -1,0 +1,12 @@
+The image data has been withheld from this repository to keep it manageable.
+To run the model, first download the data:
+
+https://www.kaggle.com/c/tgs-salt-identification-challenge/data
+
+Place the downloaded data files in this directory with the following structure:
+
+data/test/images/<all testing images>
+data/train/images/<all training images>
+data/train/masks/<all training masks>
+
+(Data in this directory is not modified.)
