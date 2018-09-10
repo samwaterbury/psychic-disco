@@ -19,8 +19,8 @@ import pandas as pd
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 
-from model import fit_model
-from utilities import read_image, downsample, encode_mask
+from models import UNet
+from utilities import read_image
 
 # Define constant filepaths
 PATHS = {
@@ -29,7 +29,7 @@ PATHS = {
     'train_masks': 'data/train/masks/',
     'saved_train': 'output/train.pk',
     'saved_test': 'output/test.pk',
-    'saved_weights': 'output/weights.model',
+    'unet': 'output/unet.model',
     'submission': 'output/submission.csv'
 }
 
@@ -76,22 +76,23 @@ def main(fresh=False):
 
     # Construct the training and validation sets
     x_train, x_val, y_train, y_val, cov_train, cov_val, depth_train, depth_val \
-        = train_test_split(np.stack(train['image']), np.stack(train['mask']),
-                           train['coverage'], train['depth'],
+        = train_test_split(np.stack(train['image']), np.stack(train['mask']), train['coverage'], train['depth'],
                            stratify=train['class'], test_size=0.2, random_state=1)
 
     # Augment the training data by mirroring the training observations
     x_train = np.append(x_train, [np.fliplr(x) for x in x_train], axis=0)
     y_train = np.append(y_train, [np.fliplr(x) for x in y_train], axis=0)
 
-    # Construct and fit the network
-    print('Building and fitting the model...')
-    model = fit_model(x_train, y_train, x_val, y_val, weights_filepath=PATHS['saved_weights'])
+    # First model: U-Net
+    print('Building and fitting the U-Net model...')
+    unet = UNet(PATHS['unet'])
+    unet.fit_model(x_train, y_train, x_val, y_val)
 
-    # Now make predictions for the test set, downsample, and create the masks
-    print('Making predictions')
+    # Now make predictions for the test set
+    print('Making predictions...')
 
     # TODO
+    # <downsample and create the masks>
     # predictions = model.predict(np.stack(test['image']), verbose=1)
     # predictions = [downsample(array) for array in predictions]
     # test['mask'] = [np.rint(array).astype(np.uint8) for array in predictions]
