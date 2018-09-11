@@ -4,8 +4,8 @@ Kaggle. Information about the competition can be found here:
 
 https://www.kaggle.com/c/tgs-salt-identification-challenge
 
-The approach used here is a convolutional neural network. For a more in-depth
-description of the project and approach, see `README.md`.
+The approach used here is an ensemble of convolutional neural networks. For a
+more in-depth description of the project and approach, see `README.md`.
 
 Author: Sam Waterbury
 GitHub: https://github.com/samwaterbury/salt-identification
@@ -13,40 +13,23 @@ GitHub: https://github.com/samwaterbury/salt-identification
 
 import os
 import pickle
-import numpy as np
 import pandas as pd
+import numpy as np
 
-from tqdm import tqdm
+from keras.preprocessing.image import load_img
 from sklearn.model_selection import train_test_split
 
-from models import UNet
-from utilities import read_image
+from utilities import PATHS, get_coverage_class, get_optimal_cutoff, encode
+from models import UNetResNet
 
-# Define constant filepaths
-PATHS = {
-    'train_images': 'data/train/images/',
-    'test_images': 'data/test/images/',
-    'train_masks': 'data/train/masks/',
-    'saved_train': 'output/train.pk',
-    'saved_test': 'output/test.pk',
-    'unet': 'output/unet.model',
-    'submission': 'output/submission.csv'
-}
-
-# IMG_PATH_TRAIN = 'data/train/images/'
-# IMG_PATH_TEST = 'data/test/images/'
-# MASKS_PATH_TRAIN = 'data/train/masks/'
-# TRAIN_FILEPATH = 'output/train.pk'
-# TEST_FILEPATH = 'output/test.pk'
-# NETWORK_FILEPATH = 'output/network.pk'
-# MODEL_WEIGHTS_FILEPATH = 'output/weights.model'
+fresh = False  # TODO Remove later
 
 
-def main(fresh=False):
+def construct_data(fresh=False):
     """
-    Run all steps in sequence.
+    Constructs the standard dataset to be used by all models.
 
-    :param fresh: Ignore previous results and rerun every step from scratch.
+    :return: DataFrames `train` and `test` with image, mask, and depth columns.
     """
     # Make sure the data has been downloaded and placed in the correct location
     for required_path in PATHS.values():
@@ -56,99 +39,98 @@ def main(fresh=False):
     if not os.listdir(PATHS['test_images']) or not os.listdir(PATHS['train_images']):
         raise FileNotFoundError('Need to download the data! Check the readme.')
 
-    # Construct the dataset
-    if os.path.exists(PATHS['saved_train']) and os.path.exists(PATHS['saved_test']) and not fresh:
-        print('Existing dataset found; loading it...')
+    # If possible, read the constructed data from existing files
+    if not fresh and os.path.exists(PATHS['saved_train']) and os.path.exists(PATHS['saved_test']):
+        print('Found existing saved dataset; loading it...')
         with open(PATHS['saved_train'], mode='rb') as train_file:
-            train = pickle.load(train_file)
+            df_train = pickle.load(train_file)
         with open(PATHS['saved_test'], mode='rb') as test_file:
-            test = pickle.load(test_file)
-    else:
-        print('Constructing the dataset...')
-        train, test = construct_dataset()
-        try:
-            with open(file=PATHS['saved_train'], mode='wb') as train_file:
-                pickle.dump(train, file=train_file)
-            with open(file=PATHS['saved_test'], mode='wb') as test_file:
-                pickle.dump(test, test_file)
-        except OSError:
-            print('Couldn\'t save the dataset to disk due to an occasional pickle bug! :(')
+            df_test = pickle.load(test_file)
+        return df_train, df_test
 
-    # Construct the training and validation sets
-    x_train, x_val, y_train, y_val, cov_train, cov_val, depth_train, depth_val \
-        = train_test_split(np.stack(train['image']), np.stack(train['mask']), train['coverage'], train['depth'],
-                           stratify=train['class'], test_size=0.2, random_state=1)
+    print('Constructing the dataset...')
 
-    # Augment the training data by mirroring the training observations
-    x_train = np.append(x_train, [np.fliplr(x) for x in x_train], axis=0)
-    y_train = np.append(y_train, [np.fliplr(x) for x in y_train], axis=0)
+    # Read in the CSV files and create DataFrames for train, test observations
+    depths = pd.read_csv(PATHS['depths_df'], index_col='id')
+    df_train = pd.read_csv(PATHS['train_df'], index_col='id', usecols=[0]).join(depths)
+    df_test = depths[~depths.index.isin(df_train.index)].copy()
 
-    # First model: U-Net
-    print('Building and fitting the U-Net model...')
-    unet = UNet(PATHS['unet'])
-    unet.fit_model(x_train, y_train, x_val, y_val)
+    # Read in the images as greyscale and normalize the pixel values
 
-    # Now make predictions for the test set
-    print('Making predictions...')
+    # (Training images)
+    train_image_path = PATHS['train_images'] + '{}.png'
+    df_train['image'] = [np.array(load_img(train_image_path.format(i), color_mode='grayscale')) / 255
+                         for i in df_train.index]
 
-    # TODO
-    # <downsample and create the masks>
-    # predictions = model.predict(np.stack(test['image']), verbose=1)
-    # predictions = [downsample(array) for array in predictions]
-    # test['mask'] = [np.rint(array).astype(np.uint8) for array in predictions]
-    # encoded_masks = [encode_mask(mask) for mask in test['mask']]
-    # final = pd.DataFrame({'id': test['id'], 'rle_mask': encoded_masks}, index='id')
+    # (Training masks)
+    train_mask_path = PATHS['train_masks'] + '{}.png'
+    df_train['mask'] = [np.array(load_img(train_mask_path.format(i), color_mode='grayscale')) / 255
+                        for i in df_train.index]
 
+    # (Testing images)
+    test_image_path = PATHS['test_images'] + '{}.png'
+    df_test['image'] = [np.array(load_img(test_image_path.format(i), color_mode='grayscale')) / 255
+                        for i in df_test.index]
 
-def construct_dataset(limit=None):
-    """
-    Construct two identically-formatted datasets for test and train containing:
-        id          :   ID of the image and its corresponding mask
-        image       :   array of the image
-        mask        :   array of the mask or `np.nan` if test observation
-        depth       :   depth the image was taken at
-        class       :   one of 10 classes 0,...,10 assigned according to depth
+    # Calculate the coverage for the training images
+    # Then, bin the images into discrete classes corresponding to their coverage
+    df_train['coverage'] = df_train['mask'].map(np.sum) / pow(101, 2)
+    df_train['coverage_class'] = df_train['coverage'].map(get_coverage_class)
 
-    :return: Dicts train, test containing the ids, images, masks, and depths.
-    """
-    train = {'id': [], 'image': [], 'mask': [], 'depth': [], 'coverage': [], 'class': []}
-    test = {'id': [], 'image': [], 'mask': [], 'depth': [], 'coverage': [], 'class': []}
+    # Write to file
+    with open(PATHS['saved_train'], mode='wb') as train_file:
+        pickle.dump(df_train, train_file)
+    with open(PATHS['saved_test'], mode='wb') as test_file:
+        pickle.dump(df_test, test_file)
 
-    # This file contains the depth corresponding to every image in train or test
-    depths = pd.read_csv('data/depths.csv', index_col='id')
-
-    # Collect the train data
-    for filename in tqdm(os.listdir(PATHS['train_images'])):
-        image_id = filename.split('.')[0]
-        mask = read_image(os.path.join(PATHS['train_masks'], filename))
-        coverage = np.sum(mask) / 101 ** 2
-
-        # Detemine which coverage class this observation belongs to
-        coverage_class = 10.
-        for cutoff in range(11):
-            if coverage * 10 <= cutoff:
-                coverage_class = cutoff
-                break
-
-        # Enter this observation into the dictionary
-        train['id'].append(image_id)
-        train['image'].append(read_image(os.path.join(PATHS['train_images'], filename)))
-        train['mask'].append(mask)
-        train['depth'].append(depths.loc[image_id, 'z'])
-        train['coverage'].append(coverage)
-        train['class'].append(coverage_class)
-
-    # Now do the same for the test data
-    for filename in tqdm(os.listdir(PATHS['test_images'])):
-        image_id = filename.split('.')[0]
-
-        # Enter this observation into the dictionary
-        test['id'].append(image_id)
-        test['image'].append(read_image(os.path.join(PATHS['test_images'], filename)))
-        test['depth'].append(depths.loc[image_id, 'z'])
-
-    return train, test
+    return df_train, df_test
 
 
-if __name__ == '__main__':
-    main()
+# ---------------------------------------------------------------------------- #
+# ---------------------------- DATA PREPROCESSING ---------------------------- #
+# ---------------------------------------------------------------------------- #
+
+# Construct the data set
+train, test = construct_data(fresh)
+
+# Split the st into a training set and a validation set
+id_train, id_valid, x_train, x_valid, y_train, y_valid, cov_train, cov_test, depth_train, depth_test \
+    = train_test_split(train.index.values,
+                       np.array(train['image'].tolist()).reshape(-1, 101, 101, 1),
+                       np.array(train['mask'].tolist()).reshape(-1, 101, 101, 1),
+                       train['coverage'].values,
+                       train['z'].values,
+                       test_size=0.2, stratify=train['coverage_class'], random_state=1)
+
+# Data augmentation
+x_train = np.append(x_train, [np.fliplr(x) for x in x_train], axis=0)
+y_train = np.append(y_train, [np.fliplr(x) for x in y_train], axis=0)
+
+# ---------------------------------------------------------------------------- #
+# --------------------------------- MODELING --------------------------------- #
+# ---------------------------------------------------------------------------- #
+
+# Model 1: U-Net with ResNet blocks
+print('Creating and fitting the U-Net with ResNet blocks...')
+if not fresh and os.path.exists(PATHS['saved_unetresnet']):
+    model1 = UNetResNet().load_model(load_path=PATHS['saved_unetresnet'])
+else:
+    model1 = UNetResNet(save_path=PATHS['saved_unetresnet'])
+model1.fit_model(x_train, y_train, x_valid, y_valid)
+
+# Make predictions for the validation set
+model1_valid_pred = model1.predict(x_valid)
+
+# Determine the optimal likelihood cutoff for segmenting images
+model1_optimal_cutoff = get_optimal_cutoff(model1_valid_pred, y_valid)
+
+# Make predictions for the test set
+x_test = np.array(test['image'].tolist()).reshape(-1, 101, 101, 1)
+model1_test_pred = model1.predict(x_test)
+
+model1_predictions = pd.DataFrame.from_dict({
+    i: encode(np.round(model1_test_pred[j] > model1_optimal_cutoff)) for j, i in enumerate(test.index.values)
+}, orient='index')
+model1_predictions.index.names = ['id']
+model1_predictions.columns = ['rle_mask']
+model1_predictions.to_csv(PATHS['submission'])
