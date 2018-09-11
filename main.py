@@ -78,10 +78,13 @@ def construct_data(fresh=False):
     df_train['coverage_class'] = df_train['coverage'].map(get_coverage_class)
 
     # Write to file
-    with open(PATHS['saved_train'], mode='wb') as train_file:
-        pickle.dump(df_train, train_file)
-    with open(PATHS['saved_test'], mode='wb') as test_file:
-        pickle.dump(df_test, test_file)
+    try:
+        with open(PATHS['saved_train'], mode='wb') as train_file:
+            pickle.dump(df_train, train_file)
+        with open(PATHS['saved_test'], mode='wb') as test_file:
+            pickle.dump(df_test, test_file)
+    except OSError:
+        print('Could not save the data due to an occasional Python bug in macOS.')
 
     return df_train, df_test
 

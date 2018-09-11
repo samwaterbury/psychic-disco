@@ -16,9 +16,9 @@ from keras.layers.convolutional import Conv2D, Conv2DTranspose
 from keras.layers.pooling import MaxPooling2D
 from keras.layers.merge import concatenate
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
-from keras import optimizers
+from keras.optimizers import adam
 
-from utilities import get_iou
+from utilities import get_iou_round1, get_iou_round2, lovasz_loss
 
 # --------------------------------- (1) U-Net -------------------------------- #
 
@@ -169,32 +169,15 @@ from utilities import get_iou
 class UNetResNet:
     def __init__(self, save_path=None):
 
-        # Construct the network
-        self.model = self.build_model(neurons_init=16, kernel_init='glorot_uniform', dropout_ratio=0.5)
-
-        # Specify the optimization scheme
-        self.model.compile(optimizer=optimizers.adam(lr=0.01),
-                           loss='binary_crossentropy',
-                           metrics=[get_iou])
-
-        # Callbacks
-        self.callbacks = []
-        self.callbacks.append(
-            EarlyStopping(monitor='get_iou', patience=10, verbose=1, mode='max')
-        )
-        self.callbacks.append(
-            ReduceLROnPlateau(monitor='get_iou', factor=0.5, patience=5, verbose=1,
-                              mode='max', min_lr=0.0001)
-        )
-        if save_path is not None:
-            self.callbacks.append(
-                ModelCheckpoint(save_path, monitor='get_iou', mode='max', verbose=1,
-                                save_best_only=True, save_weights_only=False)
-            )
+        # Construct the network used for the first round of training
+        input_layer = Input(shape=(101, 101, 1))
+        output_layer = self.build_model(input_layer, neurons_init=16, kernel_init='glorot_uniform', dropout_ratio=0.5)
+        self.model = Model(input_layer, output_layer)
 
         # Parameters for fitting
         self.batch_size = 32
         self.epochs = 50
+        self.early_stopping_patience = 20
         self.save_path = save_path
 
     @staticmethod
@@ -222,8 +205,7 @@ class UNetResNet:
         return layer
 
     @staticmethod
-    def build_model(neurons_init=16, kernel_init='glorot_uniform', dropout_ratio=0.5):
-        input_layer = Input(shape=(101, 101, 1))
+    def build_model(input_layer, neurons_init=16, kernel_init='glorot_uniform', dropout_ratio=0.5):
 
         # 101 -> 50
         conv1 = Conv2D(neurons_init, kernel_size=(3, 3), strides=(1, 1), padding='same',
@@ -271,7 +253,7 @@ class UNetResNet:
         uconv4 = UNetResNet.residual_block(uconv4, neurons_init * 8, batch_activation=True)
 
         # 12 -> 25
-        deconv3 = Conv2DTranspose(neurons_init * 4, kernel_size=(3, 3), strides=(2, 2), padding='valid',  # TODO try same?
+        deconv3 = Conv2DTranspose(neurons_init * 4, kernel_size=(3, 3), strides=(2, 2), padding='valid',  # TODO 'same'?
                                   kernel_initializer=kernel_init)(uconv4)
         uconv3 = concatenate([deconv3, conv3])
         uconv3 = Dropout(rate=dropout_ratio)(uconv3)
@@ -305,18 +287,76 @@ class UNetResNet:
 
         # Output layer
         output_layer = Conv2D(filters=1, kernel_size=(1, 1), padding='same', kernel_initializer=kernel_init)(uconv1)
-        output_layer = Activation('sigmoid')(output_layer)  # Try without?
+        # output_layer = Activation('sigmoid')(output_layer)
 
-        return Model(input_layer, output_layer)
+        return output_layer
 
     def fit_model(self, x_train, y_train, x_valid, y_valid):
+        """
+        Fit this model in two training stages. During the first stage, use
+        binary crossentropy as the loss function. Then, during the second stage,
+        drop the final activation on the output layer and continue fitting with
+        the Lovasz loss function.
+
+        :param x_train: Training set of 101x101x1 image arrays.
+        :param y_train: Training set of 101x101x1 mask arrays.
+        :param x_valid: Validation set of 101x101x1 image arrays.
+        :param y_valid: Validation set of 101x101x1 mask arrays.
+        :return:
+        """
+
+        # Compile the model
+        self.model.compile(optimizer=adam(lr=0.01),
+                           loss='binary_crossentropy',
+                           metrics=[get_iou_round1])
+
+        # Callbacks
+        callbacks = [
+            EarlyStopping(monitor='get_iou_round1', patience=self.early_stopping_patience, verbose=1, mode='max'),
+            ReduceLROnPlateau(monitor='get_iou_round1', factor=0.5, patience=5, verbose=1, mode='max', min_lr=0.0001)
+        ]
+
+        # Only save this model if it wasn't loaded from a file
+        if self.save_path is not None:
+            callbacks.append(ModelCheckpoint(self.save_path, monitor='get_iou_round1', mode='max', verbose=1,
+                                             save_best_only=True, save_weights_only=False))
+
+        # First stage of model fitting
         self.model.fit(x=x_train, y=y_train, batch_size=self.batch_size, epochs=self.epochs, verbose=1,
-                       callbacks=self.callbacks, validation_data=[x_valid, y_valid])
+                       callbacks=callbacks, validation_data=[x_valid, y_valid])
+
+        # Now drop the final activation and switch to Lovasz loss function
+        stage2_model = Model(self.model.layers[0].input, self.model.layers[-1].input)
+        stage2_model.compile(optimizer=adam(lr=0.01),
+                             loss=lovasz_loss,
+                             metrics=[get_iou_round2])
+
+        # Update the callbacks
+        for cb in callbacks:
+            cb.monitor = 'get_iou_round2'
+
+        stage2_model.fit(x=x_train, y=y_train, batch_size=self.batch_size, epochs=self.epochs, verbose=1,
+                         callbacks=callbacks, validation_data=[x_valid, y_valid])
 
     def load_model(self, load_path):
+        """
+        Loads the model weights from a saved weights file instead of retraining.
+
+        :param load_path: Path to 'unetresnet.model' file.
+        """
+        self.model = Model(self.model.layers[0].input, self.model.layers[-1].input)
+        self.model.compile(optimizer=adam(lr=0.01),
+                           loss=lovasz_loss,
+                           metrics=[get_iou_round2])
         self.model.load_weights(load_path)
 
     def predict(self, x):
+        """
+        Make score predictions on `x`.
+
+        :param x: Set of 101x101 image arrays.
+        :return: 101x101 arrays of pixel scores for each image in `x`.
+        """
         x_test_mirrored = np.array([np.fliplr(image) for image in x])
         predictions = self.model.predict(x).reshape(-1, 101, 101)
         predictions_mirrored = self.model.predict(x_test_mirrored).reshape(-1, 101, 101)

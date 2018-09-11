@@ -8,20 +8,23 @@ GitHub: https://github.com/samwaterbury/salt-identification
 import numpy as np
 import tensorflow as tf
 from skimage.transform import resize
+from keras import backend
+
+from lovasz import lovasz_hinge
 
 
 # Constant paths to files in this repository
 PATHS = {
-    'train_images': 'data/train/images/',
-    'test_images': 'data/test/images/',
-    'train_masks': 'data/train/masks/',
-    'depths_df': 'data/depths.csv',
-    'train_df': 'data/train.csv',
-    'saved_train': 'output/train.pk',
-    'saved_test': 'output/test.pk',
+    'train_images':     'data/train/images/',
+    'test_images':      'data/test/images/',
+    'train_masks':      'data/train/masks/',
+    'depths_df':        'data/depths.csv',
+    'train_df':         'data/train.csv',
+    'saved_train':      'output/train.pk',
+    'saved_test':       'output/test.pk',
     'saved_unetresnet': 'output/unetresnet.model',
-    'saved_unet': 'output/unet.model',
-    'submission': 'output/submission.csv'
+    'saved_unet':       'output/unet.model',
+    'submission':       'output/submission.csv'
 }
 
 
@@ -114,7 +117,7 @@ def competition_metric(true, pred):
     return np.mean(metric)
 
 
-def get_iou(y_true, y_scores):
+def get_iou_round1(y_true, y_scores):
     """
     TensorFlow wrapper for `competition_metric()`.
 
@@ -123,3 +126,31 @@ def get_iou(y_true, y_scores):
     :return: Evaluation of the competition metric for `y_scores`.
     """
     return tf.py_func(competition_metric, [y_true, y_scores > 0.5], tf.float64)
+
+
+def get_iou_round2(y_true, y_scores):
+    """
+    TensorFlow wrapper for `competition_metric()`.
+
+    :param y_scores: 2-dimensional arrays of pixel scores.
+    :param y_true: True masks corresponding to the arrays in `y_scores`.
+    :return: Evaluation of the competition metric for `y_scores`.
+    """
+    return tf.py_func(competition_metric, [y_true, y_scores > 0.], tf.float64)
+
+
+def lovasz_loss(y_true, y_pred):
+    """
+    Lovasz loss is a suitable proxy for the competition metric to use during
+    model training.
+
+    :param y_true: True masks corresponding to the arrays in `y_scores`.
+    :param y_pred: 2-dimensional arrays of pixel scores.
+    :return:
+    """
+    y_true = backend.cast(backend.squeeze(y_true, -1), 'int32')
+    y_pred = backend.cast(backend.squeeze(y_pred, -1), 'float32')
+    return lovasz_hinge(y_pred, y_true)
+
+
+lovasz_loss
