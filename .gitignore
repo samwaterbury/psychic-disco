@@ -4,3 +4,5 @@ sample_submission.csv
 data/train/
 data/test/
 output/
+__pycache__/
+run_jobs.sh

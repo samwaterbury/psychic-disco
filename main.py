@@ -20,7 +20,7 @@ import numpy as np
 from keras.preprocessing.image import load_img
 from sklearn.model_selection import train_test_split
 
-from utilities import PATHS, get_coverage_class, get_optimal_cutoff, encode, Logger
+from utilities import PATHS, get_optimal_cutoff, encode, Logger
 from models import UNetResNet
 
 
@@ -28,8 +28,7 @@ def main(fresh=False):
     """
     Runs the entire modeling process and generates predictions.
 
-    :param fresh:
-    :return:
+    :param fresh: If True, ignore previous saves and reconstruct everything.
     """
     sys.stdout = Logger(sys.stdout)
 
@@ -37,10 +36,11 @@ def main(fresh=False):
     # --------------------------- HANDLE ARGUMENTS --------------------------- #
     # ------------------------------------------------------------------------ #
 
-    # MODEL_SAVE_PATH   PRED_SAVE_PATH    DROPOUT_RATE    EPOCHS
+    fresh = True
+    dropout_ratio = 0.50
+    epochs = 50
+    kernel_init = 'glorot_normal'
     for i in range(len(sys.argv)):
-        dropout_ratio = 0.50
-        epochs = 50
         if i == 0:
             continue
         if i == 1:
@@ -48,9 +48,11 @@ def main(fresh=False):
         if i == 2:
             PATHS['submission'] = sys.argv[i]
         if i == 3:
-            dropout_ratio = sys.argv[i]
+            dropout_ratio = float(sys.argv[i])
         if i == 4:
-            epochs = sys.argv[i]
+            epochs = int(sys.argv[i])
+        if i == 5:
+            kernel_init = sys.argv[i]
 
     # ------------------------------------------------------------------------ #
     # -------------------------- DATA PREPROCESSING -------------------------- #
@@ -78,13 +80,14 @@ def main(fresh=False):
 
     # Model 2: U-Net with ResNet blocks
     print('Creating and fitting the U-Net with ResNet blocks...')
-    if not fresh and os.path.exists(PATHS['saved_unetresnet']):
+    if not fresh and os.path.exists(PATHS['save_model2']):
         model2 = UNetResNet().load_model(load_path=PATHS['save_model2'])
     else:
-        model2 = UNetResNet(save_path=PATHS['save_model2'])
+        model2 = UNetResNet(save_path=PATHS['save_model2'], dropout_ratio=dropout_ratio,
+                            epochs=epochs, kernel_init=kernel_init)
     model2.fit_model(x_train, y_train, x_valid, y_valid)
 
-    print('Model 2 has been fitted:' + '\n# epochs: ' + model2.epochs + '\ndropout %: ' + model2.dropout_ratio)
+    print('Model 2 has been fitted:' + '\n# epochs: ' + str(model2.epochs) + '\ndropout %: ' + str(model2.dropout_ratio))
 
     # Make predictions for the validation set
     model2_valid_pred = model2.predict(x_valid)
@@ -156,7 +159,7 @@ def construct_data(fresh=False):
     # Calculate the coverage for the training images
     # Then, bin the images into discrete classes corresponding to their coverage
     df_train['coverage'] = df_train['mask'].map(np.sum) / pow(101, 2)
-    df_train['coverage_class'] = df_train['coverage'].map(get_coverage_class)
+    df_train['coverage_class'] = df_train['coverage'].map(lambda cov: np.int(np.ceil(cov * 10)))
 
     # Write to file
     try:

@@ -26,6 +26,7 @@ PATHS = {
     'saved_test':       'output/test.pk',
     'save_model1':      'output/model1.model',
     'save_model2':      'output/model2.model',
+    'logfile':          'output/log-{}',
     'submission':       'output/submission.csv'
 }
 
@@ -33,7 +34,7 @@ PATHS = {
 class Logger:
     def __init__(self, stdout):
         self.terminal = stdout
-        self.log = open('log-{}'.format(datetime.now().strftime('%Y%m%d-%I-%M-%p')), 'a')
+        self.log = open(PATHS['logfile'].format(datetime.now().strftime('%Y%m%d-%I-%M-%p')), 'a')
 
     def write(self, message):
         self.terminal.write(message)
@@ -41,19 +42,6 @@ class Logger:
 
     def flush(self):
         pass
-
-
-def get_coverage_class(coverage):
-    """
-    Assigns a class 1,...,10 to a coverage score; used to stratify the training-
-    validation split.
-
-    :param coverage: Proportion of the pixels in an image which are salt-masked.
-    :return: Intger between 1 and 10.
-    """
-    for cutoff in range(0, 11):
-        if coverage * 10 <= cutoff:
-            return cutoff
 
 
 def resize_image(image, size=101):
@@ -166,6 +154,3 @@ def lovasz_loss(y_true, y_pred):
     y_true = backend.cast(backend.squeeze(y_true, -1), 'int32')
     y_pred = backend.cast(backend.squeeze(y_pred, -1), 'float32')
     return lovasz_hinge(y_pred, y_true)
-
-
-lovasz_loss

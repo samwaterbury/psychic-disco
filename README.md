@@ -17,7 +17,8 @@ Not revealed yet! The contest ends **October 19, 2018 at 11:59 PM UTC**.
 
 The following files contain all of the code used to make my final predictions:
 
-* `main.py` reads in the data, performs preprocessing and modeling, and then generates the predictions.
+* `main.py` reads in the data, performs preprocessing and modeling, and then 
+generates the predictions.
 
 * `models.py` fully implements the models I built for this competition.
 
@@ -51,3 +52,42 @@ U-Net paper recommends
 * An alternative model which resizes the input from 101x101 to 128x128
 
 * Stratify by depth in addition to coverage
+
+* 5-fold CV instead of 1-fold CV
+
+* Ensemble methods with more models (e.g., pre-trained models) 
+(`https://www.kaggle.com/c/tgs-salt-identification-challenge/discussion/64645`)
+(`https://www.kaggle.com/alexanderliao/u-net-bn-aug-strat-focal-loss`)
+(`https://www.kaggle.com/meaninglesslives/unet-resnet34-in-keras`)
+
+* Conditional random field 
+(`https://github.com/sadeepj/crfasrnn_keras`)
+(`https://www.kaggle.com/meaninglesslives/apply-crf`)
+(`https://www.kaggle.com/meaninglesslives/apply-crf-unet-resnet`)
+
+* Include depth in model
+
+* Vertical flipping in addition to horizontal flipping
+
+* Image augmentation with deformations and intensity
+
+* Tune contraction, middle, and expansion blocks separately
+
+* Try dropping the messed-up mask 
+(`https://www.kaggle.com/pestipeti/fake-incorrect-training-masks`)
+
+* Check expansion block ("replace conv2D with 2 basic resnet blocks in each 
+level of U-net")
+(`https://www.kaggle.com/divrikwicky/u-net-with-simple-resnet-blocks-forked`)
+
+* Read through this: 
+(`https://www.kaggle.com/c/tgs-salt-identification-challenge/discussion/65226`)
+
+* Make sure the best model is used to make predictions; try loading the saved 
+model, retraining on all data, or look at 5-fold CV point above
+
+* Look for ideas on GitHub
+
+* Optimizer momentum -> 0.90; dropout -> 0.2, neurons -> double, 
+batch size -> smaller (4?) 
+
