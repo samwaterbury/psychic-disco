@@ -5,6 +5,8 @@ Author: Sam Waterbury
 GitHub: https://github.com/samwaterbury/salt-identification
 """
 
+from datetime import datetime
+
 import numpy as np
 import tensorflow as tf
 from skimage.transform import resize
@@ -22,10 +24,23 @@ PATHS = {
     'train_df':         'data/train.csv',
     'saved_train':      'output/train.pk',
     'saved_test':       'output/test.pk',
-    'saved_unetresnet': 'output/unetresnet.model',
-    'saved_unet':       'output/unet.model',
+    'save_model1':      'output/model1.model',
+    'save_model2':      'output/model2.model',
     'submission':       'output/submission.csv'
 }
+
+
+class Logger:
+    def __init__(self, stdout):
+        self.terminal = stdout
+        self.log = open('log-{}'.format(datetime.now().strftime('%Y%m%d-%I-%M-%p')), 'a')
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+
+    def flush(self):
+        pass
 
 
 def get_coverage_class(coverage):

@@ -12,6 +12,7 @@ GitHub: https://github.com/samwaterbury/salt-identification
 """
 
 import os
+import sys
 import pickle
 import pandas as pd
 import numpy as np
@@ -19,13 +20,90 @@ import numpy as np
 from keras.preprocessing.image import load_img
 from sklearn.model_selection import train_test_split
 
-from utilities import PATHS, get_coverage_class, get_optimal_cutoff, encode
+from utilities import PATHS, get_coverage_class, get_optimal_cutoff, encode, Logger
 from models import UNetResNet
 
-fresh = False  # TODO Remove later
 
-# ARGS
-# MODEL_SAVE_PATH   PRED_SAVE_PATH    DROPOUT_RATE    EPOCHS
+def main(fresh=False):
+    """
+    Runs the entire modeling process and generates predictions.
+
+    :param fresh:
+    :return:
+    """
+    sys.stdout = Logger(sys.stdout)
+
+    # ------------------------------------------------------------------------ #
+    # --------------------------- HANDLE ARGUMENTS --------------------------- #
+    # ------------------------------------------------------------------------ #
+
+    # MODEL_SAVE_PATH   PRED_SAVE_PATH    DROPOUT_RATE    EPOCHS
+    for i in range(len(sys.argv)):
+        dropout_ratio = 0.50
+        epochs = 50
+        if i == 0:
+            continue
+        if i == 1:
+            PATHS['save_model2'] = sys.argv[i]
+        if i == 2:
+            PATHS['submission'] = sys.argv[i]
+        if i == 3:
+            dropout_ratio = sys.argv[i]
+        if i == 4:
+            epochs = sys.argv[i]
+
+    # ------------------------------------------------------------------------ #
+    # -------------------------- DATA PREPROCESSING -------------------------- #
+    # ------------------------------------------------------------------------ #
+
+    # Construct the data set
+    train, test = construct_data(fresh)
+
+    # Split the st into a training set and a validation set
+    id_train, id_valid, x_train, x_valid, y_train, y_valid, cov_train, cov_test, depth_train, depth_test \
+        = train_test_split(train.index.values,
+                           np.array(train['image'].tolist()).reshape(-1, 101, 101, 1),
+                           np.array(train['mask'].tolist()).reshape(-1, 101, 101, 1),
+                           train['coverage'].values,
+                           train['z'].values,
+                           test_size=0.2, stratify=train['coverage_class'], random_state=1)
+
+    # Data augmentation
+    x_train = np.append(x_train, [np.fliplr(x) for x in x_train], axis=0)
+    y_train = np.append(y_train, [np.fliplr(x) for x in y_train], axis=0)
+
+    # ------------------------------------------------------------------------ #
+    # ------------------------------- MODELING ------------------------------- #
+    # ------------------------------------------------------------------------ #
+
+    # Model 2: U-Net with ResNet blocks
+    print('Creating and fitting the U-Net with ResNet blocks...')
+    if not fresh and os.path.exists(PATHS['saved_unetresnet']):
+        model2 = UNetResNet().load_model(load_path=PATHS['save_model2'])
+    else:
+        model2 = UNetResNet(save_path=PATHS['save_model2'])
+    model2.fit_model(x_train, y_train, x_valid, y_valid)
+
+    print('Model 2 has been fitted:' + '\n# epochs: ' + model2.epochs + '\ndropout %: ' + model2.dropout_ratio)
+
+    # Make predictions for the validation set
+    model2_valid_pred = model2.predict(x_valid)
+
+    # Determine the optimal likelihood cutoff for segmenting images
+    model2_optimal_cutoff = get_optimal_cutoff(model2_valid_pred, y_valid)
+
+    # Make predictions for the test set
+    x_test = np.array(test['image'].tolist()).reshape(-1, 101, 101, 1)
+    model2_test_pred = model2.predict(x_test)
+
+    model2_predictions = pd.DataFrame.from_dict({
+        i: encode(np.round(model2_test_pred[j] > model2_optimal_cutoff)) for j, i in enumerate(test.index.values)
+    }, orient='index')
+    model2_predictions.index.names = ['id']
+    model2_predictions.columns = ['rle_mask']
+    model2_predictions.to_csv(PATHS['submission'])
+
+    exit()
 
 
 def construct_data(fresh=False):
@@ -92,51 +170,5 @@ def construct_data(fresh=False):
     return df_train, df_test
 
 
-# ---------------------------------------------------------------------------- #
-# ---------------------------- DATA PREPROCESSING ---------------------------- #
-# ---------------------------------------------------------------------------- #
-
-# Construct the data set
-train, test = construct_data(fresh)
-
-# Split the st into a training set and a validation set
-id_train, id_valid, x_train, x_valid, y_train, y_valid, cov_train, cov_test, depth_train, depth_test \
-    = train_test_split(train.index.values,
-                       np.array(train['image'].tolist()).reshape(-1, 101, 101, 1),
-                       np.array(train['mask'].tolist()).reshape(-1, 101, 101, 1),
-                       train['coverage'].values,
-                       train['z'].values,
-                       test_size=0.2, stratify=train['coverage_class'], random_state=1)
-
-# Data augmentation
-x_train = np.append(x_train, [np.fliplr(x) for x in x_train], axis=0)
-y_train = np.append(y_train, [np.fliplr(x) for x in y_train], axis=0)
-
-# ---------------------------------------------------------------------------- #
-# --------------------------------- MODELING --------------------------------- #
-# ---------------------------------------------------------------------------- #
-
-# Model 1: U-Net with ResNet blocks
-print('Creating and fitting the U-Net with ResNet blocks...')
-if not fresh and os.path.exists(PATHS['saved_unetresnet']):
-    model1 = UNetResNet().load_model(load_path=PATHS['saved_unetresnet'])
-else:
-    model1 = UNetResNet(save_path=PATHS['saved_unetresnet'])
-model1.fit_model(x_train, y_train, x_valid, y_valid)
-
-# Make predictions for the validation set
-model1_valid_pred = model1.predict(x_valid)
-
-# Determine the optimal likelihood cutoff for segmenting images
-model1_optimal_cutoff = get_optimal_cutoff(model1_valid_pred, y_valid)
-
-# Make predictions for the test set
-x_test = np.array(test['image'].tolist()).reshape(-1, 101, 101, 1)
-model1_test_pred = model1.predict(x_test)
-
-model1_predictions = pd.DataFrame.from_dict({
-    i: encode(np.round(model1_test_pred[j] > model1_optimal_cutoff)) for j, i in enumerate(test.index.values)
-}, orient='index')
-model1_predictions.index.names = ['id']
-model1_predictions.columns = ['rle_mask']
-model1_predictions.to_csv(PATHS['submission'])
+if __name__ == '__main__':
+    main()

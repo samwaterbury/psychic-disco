@@ -163,23 +163,26 @@ from utilities import get_iou_round1, get_iou_round2, lovasz_loss
 #         """
 #         return self.model.predict(x_test, verbose=1)
 
-# --------------------------------- (1) U-Net -------------------------------- #
+
+# ------------------------ (2) U-Net with ResNet blocks ---------------------- #
 
 
 class UNetResNet:
-    def __init__(self, save_path=None, dropout_ratio=0.5):
-
-        # Construct the network used for the first round of training
-        input_layer = Input(shape=(101, 101, 1))
-        output_layer = self.build_model(input_layer, neurons_init=16, kernel_init='glorot_uniform',
-                                        dropout_ratio=dropout_ratio)
-        self.model = Model(input_layer, output_layer)
+    def __init__(self, save_path=None, dropout_ratio=0.5, epochs=50, kernel_init='glorot_uniform'):
 
         # Parameters for fitting
         self.batch_size = 32
-        self.epochs = 50
+        self.epochs = epochs
+        self.dropout_ratio = dropout_ratio
+        self.kernel_init = kernel_init
         self.early_stopping_patience = 20
         self.save_path = save_path
+
+        # Construct the network used for the first round of training
+        input_layer = Input(shape=(101, 101, 1))
+        output_layer = self.build_model(input_layer, neurons_init=16, kernel_init=self.kernel_init,
+                                        dropout_ratio=self.dropout_ratio)
+        self.model = Model(input_layer, output_layer)
 
     @staticmethod
     def batch_activation(input_layer):
@@ -196,7 +199,7 @@ class UNetResNet:
         return conv
 
     @staticmethod
-    def residual_block(block_input, neurons=16, batch_activation=False):
+    def residual_block(block_input, neurons, batch_activation=False):
         layer = UNetResNet.batch_activation(block_input)
         layer = UNetResNet.convolution_block(layer, neurons, size=(3, 3))
         layer = UNetResNet.convolution_block(layer, neurons, size=(3, 3), activation=False)
