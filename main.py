@@ -24,6 +24,9 @@ from models import UNetResNet
 
 fresh = False  # TODO Remove later
 
+# ARGS
+# MODEL_SAVE_PATH   PRED_SAVE_PATH    DROPOUT_RATE    EPOCHS
+
 
 def construct_data(fresh=False):
     """

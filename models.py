@@ -167,11 +167,12 @@ from utilities import get_iou_round1, get_iou_round2, lovasz_loss
 
 
 class UNetResNet:
-    def __init__(self, save_path=None):
+    def __init__(self, save_path=None, dropout_ratio=0.5):
 
         # Construct the network used for the first round of training
         input_layer = Input(shape=(101, 101, 1))
-        output_layer = self.build_model(input_layer, neurons_init=16, kernel_init='glorot_uniform', dropout_ratio=0.5)
+        output_layer = self.build_model(input_layer, neurons_init=16, kernel_init='glorot_uniform',
+                                        dropout_ratio=dropout_ratio)
         self.model = Model(input_layer, output_layer)
 
         # Parameters for fitting
@@ -287,7 +288,7 @@ class UNetResNet:
 
         # Output layer
         output_layer = Conv2D(filters=1, kernel_size=(1, 1), padding='same', kernel_initializer=kernel_init)(uconv1)
-        # output_layer = Activation('sigmoid')(output_layer)
+        output_layer = Activation('sigmoid')(output_layer)
 
         return output_layer
 
@@ -337,6 +338,7 @@ class UNetResNet:
 
         stage2_model.fit(x=x_train, y=y_train, batch_size=self.batch_size, epochs=self.epochs, verbose=1,
                          callbacks=callbacks, validation_data=[x_valid, y_valid])
+        self.model = stage2_model
 
     def load_model(self, load_path):
         """
