@@ -1,0 +1,57 @@
+{
+  "mandatory_directories": [
+    "data/",
+    "output/",
+    "data/train/images",
+    "data/train/masks",
+    "data/test/images"
+  ],
+  "filepaths": {
+    "train_image": "data/train/images/{}.png",
+    "test_image": "data/test/images/{}.png",
+    "train_mask": "data/train/masks/{}.png",
+    "depths_df": "data/depths.csv",
+    "train_df": "data/train.csv",
+    "saved_train": "output/train.pk",
+    "saved_test": "output/test.pk",
+    "logfile": "output/log-{}",
+    "submission": "output/submission.csv"
+  },
+  "settings": {
+    "use_saved_dataset": true,
+    "reuse_all_models": true,
+    "verbosity": 2
+  },
+  "models_to_include": [
+    "model1"
+  ],
+  "model_parameters": {
+    "model1": {
+      "final": false,
+      "use_saved_weights": true,
+      "save_path": "output/model1.model",
+      "optimal_cutoff": 0.5,
+      "verbosity": 2,
+      "k_folds": 5,
+      "kernel_initializer": "glorot_normal",
+      "neurons_initial": 16,
+      "batchnorm_momentum": 0.99,
+      "optimizer_stage1": "adam",
+      "lr_stage1": 0.01,
+      "optimizer_momentum_stage1": 0.0,
+      "optimizer_stage2": "adam",
+      "lr_stage2": 0.01,
+      "optimizer_momentum_stage2": 0.0,
+      "early_stopping_stage1": 20,
+      "early_stopping_stage2": 20,
+      "batch_size_stage1": 32,
+      "batch_size_stage2": 32,
+      "epochs_stage1": 50,
+      "epochs_stage2": 50,
+      "dropout_expansion": true,
+      "dropout_ratios_expansion": [0.25, 0.50, 0.50, 0.50],
+      "dropout_contraction": true,
+      "dropout_ratios_contraction": [0.50, 0.50, 0.50, 0.50]
+    }
+  }
+}

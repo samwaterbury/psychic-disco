@@ -15,26 +15,13 @@ from keras import backend
 from lovasz import lovasz_hinge
 
 
-# Constant paths to files in this repository
-PATHS = {
-    'train_images':     'data/train/images/',
-    'test_images':      'data/test/images/',
-    'train_masks':      'data/train/masks/',
-    'depths_df':        'data/depths.csv',
-    'train_df':         'data/train.csv',
-    'saved_train':      'output/train.pk',
-    'saved_test':       'output/test.pk',
-    'save_model1':      'output/model1.model',
-    'save_model2':      'output/model2.model',
-    'logfile':          'output/log-{}',
-    'submission':       'output/submission.csv'
-}
-
-
 class Logger:
-    def __init__(self, stdout):
+    """
+    Writes all output to the terminal as well as a logfile.
+    """
+    def __init__(self, stdout, log_path):
         self.terminal = stdout
-        self.log = open(PATHS['logfile'].format(datetime.now().strftime('%Y%m%d-%I-%M-%p')), 'a')
+        self.log = open(log_path.format(datetime.now().strftime('%Y%m%d-%I-%M-%p')), 'a')
 
     def write(self, message):
         self.terminal.write(message)

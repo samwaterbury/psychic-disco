@@ -13,147 +13,96 @@ GitHub: https://github.com/samwaterbury/salt-identification
 
 import os
 import sys
+import json
 import pickle
 import pandas as pd
 import numpy as np
+from scipy.stats import mode
 
 from keras.preprocessing.image import load_img
-from sklearn.model_selection import train_test_split
 
-from utilities import PATHS, get_optimal_cutoff, encode, Logger
+from utilities import Logger, encode
 from models import UNetResNet
 
 
-def main(fresh=False):
-    """
-    Runs the entire modeling process and generates predictions.
+def main():
+    """Runs the entire modeling process and generates predictions."""
+    config_path = sys.argv[1] if len(sys.argv) > 1 else 'config.json'
+    parameters = json.load(config_path)
 
-    :param fresh: If True, ignore previous saves and reconstruct everything.
-    """
-    sys.stdout = Logger(sys.stdout)
+    # Write to terminal and log file simultaneously.
+    sys.stdout = Logger(sys.stdout, log_path=parameters['filepaths']['logfile'])
 
-    # ------------------------------------------------------------------------ #
-    # --------------------------- HANDLE ARGUMENTS --------------------------- #
-    # ------------------------------------------------------------------------ #
-
-    fresh = True
-    dropout_ratio = 0.50
-    epochs = 50
-    kernel_init = 'glorot_normal'
-    for i in range(len(sys.argv)):
-        if i == 0:
-            continue
-        if i == 1:
-            PATHS['save_model2'] = sys.argv[i]
-        if i == 2:
-            PATHS['submission'] = sys.argv[i]
-        if i == 3:
-            dropout_ratio = float(sys.argv[i])
-        if i == 4:
-            epochs = int(sys.argv[i])
-        if i == 5:
-            kernel_init = sys.argv[i]
-
-    # ------------------------------------------------------------------------ #
-    # -------------------------- DATA PREPROCESSING -------------------------- #
-    # ------------------------------------------------------------------------ #
+    # Create missing directories if necessary
+    for directory in parameters['mandatory_directories']:
+        if not os.path.exists(directory):
+            os.mkdir(directory)
+    for directory in parameters['mandatory_directories']:
+        if not os.listdir(directory):
+            raise FileNotFoundError('Need to download the data! Check the readme.')
 
     # Construct the data set
-    train, test = construct_data(fresh)
+    train, test = construct_data(parameters['filepaths'])
 
-    # Split the st into a training set and a validation set
-    id_train, id_valid, x_train, x_valid, y_train, y_valid, cov_train, cov_test, depth_train, depth_test \
-        = train_test_split(train.index.values,
-                           np.array(train['image'].tolist()).reshape(-1, 101, 101, 1),
-                           np.array(train['mask'].tolist()).reshape(-1, 101, 101, 1),
-                           train['coverage'].values,
-                           train['z'].values,
-                           test_size=0.2, stratify=train['coverage_class'], random_state=1)
+    ensemble = []
 
-    # Data augmentation
-    x_train = np.append(x_train, [np.fliplr(x) for x in x_train], axis=0)
-    y_train = np.append(y_train, [np.fliplr(x) for x in y_train], axis=0)
+    if 'model1' in parameters['models_to_include']:
+        # Model 1: U-Net with ResNet blocks
+        print('Model 1: U-Net with ResNet blocks')
+        model1 = UNetResNet(parameters['model_parameters']['model1'])
+        print('Fitting model 1...')
+        model1.fit_model(train)
+        print('Making predictions with model 1...')
+        ensemble.append(model1.predict(test))
 
-    # ------------------------------------------------------------------------ #
-    # ------------------------------- MODELING ------------------------------- #
-    # ------------------------------------------------------------------------ #
+    # Ensemble predictions
+    print('Ensembling the predictions...')
+    ensemble_predictions = mode(ensemble, axis=0)[0]
 
-    # Model 2: U-Net with ResNet blocks
-    print('Creating and fitting the U-Net with ResNet blocks...')
-    if not fresh and os.path.exists(PATHS['save_model2']):
-        model2 = UNetResNet().load_model(load_path=PATHS['save_model2'])
-    else:
-        model2 = UNetResNet(save_path=PATHS['save_model2'], dropout_ratio=dropout_ratio,
-                            epochs=epochs, kernel_init=kernel_init)
-    model2.fit_model(x_train, y_train, x_valid, y_valid)
-
-    print('Model 2 has been fitted:' + '\n# epochs: ' + str(model2.epochs) + '\ndropout %: ' + str(model2.dropout_ratio))
-
-    # Make predictions for the validation set
-    model2_valid_pred = model2.predict(x_valid)
-
-    # Determine the optimal likelihood cutoff for segmenting images
-    model2_optimal_cutoff = get_optimal_cutoff(model2_valid_pred, y_valid)
-
-    # Make predictions for the test set
-    x_test = np.array(test['image'].tolist()).reshape(-1, 101, 101, 1)
-    model2_test_pred = model2.predict(x_test)
-
-    model2_predictions = pd.DataFrame.from_dict({
-        i: encode(np.round(model2_test_pred[j] > model2_optimal_cutoff)) for j, i in enumerate(test.index.values)
+    # Encode predictions and write to submission file
+    print('Encoding and saving the predictions...')
+    predictions = pd.DataFrame.from_dict({
+        i: encode(ensemble_predictions[j]) for j, i in enumerate(test.index.values)
     }, orient='index')
-    model2_predictions.index.names = ['id']
-    model2_predictions.columns = ['rle_mask']
-    model2_predictions.to_csv(PATHS['submission'])
+    predictions.index.names = ['id']
+    predictions.columns = ['rle_mask']
+    predictions.to_csv(parameters['filepaths']['submission'])
 
     exit()
 
 
-def construct_data(fresh=False):
+def construct_data(filepaths, reconstruct=False):
     """
     Constructs the standard dataset to be used by all models.
 
     :return: DataFrames `train` and `test` with image, mask, and depth columns.
     """
-    # Make sure the data has been downloaded and placed in the correct location
-    for required_path in PATHS.values():
-        if not os.path.exists(os.path.dirname(required_path)):
-            if os.path.dirname(required_path).split('/') in ['train', 'test']:
-                os.mkdir(os.path.dirname(required_path))
-    if not os.listdir(PATHS['test_images']) or not os.listdir(PATHS['train_images']):
-        raise FileNotFoundError('Need to download the data! Check the readme.')
-
     # If possible, read the constructed data from existing files
-    if not fresh and os.path.exists(PATHS['saved_train']) and os.path.exists(PATHS['saved_test']):
+    if not reconstruct and os.path.exists(filepaths['saved_train']) \
+            and os.path.exists(filepaths['saved_test']):
         print('Found existing saved dataset; loading it...')
-        with open(PATHS['saved_train'], mode='rb') as train_file:
+        with open(filepaths['saved_train'], mode='rb') as train_file:
             df_train = pickle.load(train_file)
-        with open(PATHS['saved_test'], mode='rb') as test_file:
+        with open(filepaths['saved_test'], mode='rb') as test_file:
             df_test = pickle.load(test_file)
         return df_train, df_test
 
     print('Constructing the dataset...')
 
     # Read in the CSV files and create DataFrames for train, test observations
-    depths = pd.read_csv(PATHS['depths_df'], index_col='id')
-    df_train = pd.read_csv(PATHS['train_df'], index_col='id', usecols=[0]).join(depths)
+    depths = pd.read_csv(filepaths['depths_df'], index_col='id')
+    df_train = pd.read_csv(filepaths['train_df'], index_col='id', usecols=[0]).join(depths)
     df_test = depths[~depths.index.isin(df_train.index)].copy()
 
     # Read in the images as greyscale and normalize the pixel values
-
     # (Training images)
-    train_image_path = PATHS['train_images'] + '{}.png'
-    df_train['image'] = [np.array(load_img(train_image_path.format(i), color_mode='grayscale')) / 255
+    df_train['image'] = [np.array(load_img(filepaths['train_image'].format(i), color_mode='grayscale')) / 255
                          for i in df_train.index]
-
     # (Training masks)
-    train_mask_path = PATHS['train_masks'] + '{}.png'
-    df_train['mask'] = [np.array(load_img(train_mask_path.format(i), color_mode='grayscale')) / 255
+    df_train['mask'] = [np.array(load_img(filepaths['train_mask'].format(i), color_mode='grayscale')) / 255
                         for i in df_train.index]
-
     # (Testing images)
-    test_image_path = PATHS['test_images'] + '{}.png'
-    df_test['image'] = [np.array(load_img(test_image_path.format(i), color_mode='grayscale')) / 255
+    df_test['image'] = [np.array(load_img(filepaths['test_image'].format(i), color_mode='grayscale')) / 255
                         for i in df_test.index]
 
     # Calculate the coverage for the training images
@@ -163,9 +112,9 @@ def construct_data(fresh=False):
 
     # Write to file
     try:
-        with open(PATHS['saved_train'], mode='wb') as train_file:
+        with open(filepaths['saved_train'], mode='wb') as train_file:
             pickle.dump(df_train, train_file)
-        with open(PATHS['saved_test'], mode='wb') as test_file:
+        with open(filepaths['saved_test'], mode='wb') as test_file:
             pickle.dump(df_test, test_file)
     except OSError:
         print('Could not save the data due to an occasional Python bug in macOS.')
