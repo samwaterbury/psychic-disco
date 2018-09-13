@@ -17,7 +17,6 @@ import json
 import pickle
 import pandas as pd
 import numpy as np
-from scipy.stats import mode
 
 from keras.preprocessing.image import load_img
 
@@ -48,14 +47,17 @@ def main():
     # Construct the data set
     train, test = construct_data(parameters['filepaths'])
 
-    if 'model1' in parameters['models_to_include']:
+    if 'unet_resnet' in parameters['models_to_include']:
         # Model 1: U-Net with ResNet blocks
         print('Model 1: U-Net with ResNet blocks')
-        model1 = UNetResNet(parameters['model_parameters']['model1'])
+        model1 = UNetResNet(parameters['model_parameters']['unet_resnet'])
         model1.fit_model(train)
-        print('Making predictions with model 1...')
+        print('Making predictions...')
         x_test = np.array(test['image'].tolist()).reshape(-1, 101, 101, 1)
-        predictions = model1.predict(x_test)
+        predictions, optimal_cutoff = model1.predict(x_test)
+        predictions = np.round(predictions > optimal_cutoff)
+
+    assert predictions
 
     # Encode predictions and write to submission file
     print('Encoding and saving the predictions...')
@@ -66,17 +68,15 @@ def main():
     predictions.columns = ['rle_mask']
     predictions.to_csv(parameters['filepaths']['submission'])
 
-    exit()
 
-
-def construct_data(filepaths, reconstruct=False):
+def construct_data(filepaths):
     """
     Constructs the standard dataset to be used by all models.
 
     :return: DataFrames `train` and `test` with image, mask, and depth columns.
     """
     # If possible, read the constructed data from existing files
-    if not reconstruct and os.path.exists(filepaths['saved_train']) \
+    if os.path.exists(filepaths['saved_train']) \
             and os.path.exists(filepaths['saved_test']):
         print('Found existing saved dataset; loading it...')
         with open(filepaths['saved_train'], mode='rb') as train_file:

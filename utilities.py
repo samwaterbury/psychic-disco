@@ -107,7 +107,7 @@ def competition_metric(true, pred):
     return np.mean(metric)
 
 
-def get_iou_round1(y_true, y_scores):
+def iou_stage1(y_true, y_scores):
     """
     TensorFlow wrapper for `competition_metric()`.
 
@@ -118,7 +118,7 @@ def get_iou_round1(y_true, y_scores):
     return tf.py_func(competition_metric, [y_true, y_scores > 0.5], tf.float64)
 
 
-def get_iou_round2(y_true, y_scores):
+def iou_stage2(y_true, y_scores):
     """
     TensorFlow wrapper for `competition_metric()`.
 
