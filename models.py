@@ -8,6 +8,8 @@ Author: Sam Waterbury
 GitHub: https://github.com/samwaterbury/salt-identification
 """
 
+import os
+
 import numpy as np
 from sklearn.model_selection import train_test_split
 
@@ -18,6 +20,7 @@ from keras.layers.pooling import MaxPooling2D
 from keras.layers.merge import concatenate
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 from keras.optimizers import adam, sgd
+from keras.utils.generic_utils import get_custom_objects
 
 from utilities import get_iou_round1, get_iou_round2, lovasz_loss, get_optimal_cutoff
 
@@ -35,7 +38,7 @@ class UNetResNet:
         self.verbose = self.params['verbosity']
         self.k_folds = self.params['k_folds']
         self.ki = self.params['kernel_initializer']
-        self.neurons_init = self.params['neurons_initial']
+        self.n_init = self.params['neurons_initial']
         self.batchnorm_momentum = self.params['batchnorm_momentum']
 
         self.optim_stage1 = self.params['optimizer_stage1']
@@ -86,84 +89,84 @@ class UNetResNet:
 
     def build_model(self, input_layer):
         # 101 -> 50
-        conv1 = Conv2D(self.neurons_init, (3, 3), padding='same', kernel_initializer=self.ki)(input_layer)
-        conv1 = self.residual_block(conv1, self.ki)
-        conv1 = self.residual_block(conv1, self.neurons_init, batch_activation=True)
-        pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
+        c1 = Conv2D(self.n_init, (3, 3), padding='same', kernel_initializer=self.ki)(input_layer)
+        c1 = self.residual_block(c1, self.n_init, self.ki)
+        c1 = self.residual_block(c1, self.n_init, batch_activation=True)
+        p1 = MaxPooling2D(pool_size=(2, 2))(c1)
         if self.dropout_expansion:
-            pool1 = Dropout(rate=self.dropout_ratios_expansion[0], seed=1)(pool1)
+            p1 = Dropout(rate=self.dropout_ratios_expansion[0], seed=1)(p1)
 
         # 50 -> 25
-        conv2 = Conv2D(self.neurons_init * 2, (3, 3), padding='same', kernel_initializer=self.ki)(pool1)
-        conv2 = self.residual_block(conv2, self.neurons_init * 2)
-        conv2 = self.residual_block(conv2, self.neurons_init * 2, batch_activation=True)
-        pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
+        c2 = Conv2D(self.n_init * 2, (3, 3), padding='same', kernel_initializer=self.ki)(p1)
+        c2 = self.residual_block(c2, self.n_init * 2)
+        c2 = self.residual_block(c2, self.n_init * 2, batch_activation=True)
+        p2 = MaxPooling2D(pool_size=(2, 2))(c2)
         if self.dropout_expansion:
-            pool2 = Dropout(rate=self.dropout_ratios_expansion[1])(pool2)
+            p2 = Dropout(rate=self.dropout_ratios_expansion[1])(p2)
 
         # 25 -> 12
-        conv3 = Conv2D(self.neurons_init * 4, (3, 3), padding='same', kernel_initializer=self.ki)(pool2)
-        conv3 = self.residual_block(conv3, self.neurons_init * 4)
-        conv3 = self.residual_block(conv3, self.neurons_init * 4, batch_activation=True)
-        pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
+        c3 = Conv2D(self.n_init * 4, (3, 3), padding='same', kernel_initializer=self.ki)(p2)
+        c3 = self.residual_block(c3, self.n_init * 4)
+        c3 = self.residual_block(c3, self.n_init * 4, batch_activation=True)
+        p3 = MaxPooling2D(pool_size=(2, 2))(c3)
         if self.dropout_expansion:
-            pool3 = Dropout(rate=self.dropout_ratios_expansion[2])(pool3)
+            p3 = Dropout(rate=self.dropout_ratios_expansion[2])(p3)
 
         # 12 -> 6
-        conv4 = Conv2D(self.neurons_init * 8, (3, 3), padding='same', kernel_initializer=self.ki)(pool3)
-        conv4 = self.residual_block(conv4, self.neurons_init * 8)
-        conv4 = self.residual_block(conv4, self.neurons_init * 8, batch_activation=True)
-        pool4 = MaxPooling2D(pool_size=(2, 2))(conv4)
+        c4 = Conv2D(self.n_init * 8, (3, 3), padding='same', kernel_initializer=self.ki)(p3)
+        c4 = self.residual_block(c4, self.n_init * 8)
+        c4 = self.residual_block(c4, self.n_init * 8, batch_activation=True)
+        p4 = MaxPooling2D(pool_size=(2, 2))(c4)
         if self.dropout_expansion:
-            pool4 = Dropout(rate=self.dropout_ratios_expansion[3])(pool4)
+            p4 = Dropout(rate=self.dropout_ratios_expansion[3])(p4)
 
         # Middle
-        convm = Conv2D(self.neurons_init * 16, (3, 3), padding='same', kernel_initializer=self.ki)(pool4)
-        convm = self.residual_block(convm, self.neurons_init * 16)
-        convm = self.residual_block(convm, self.neurons_init * 16, batch_activation=True)
+        cm = Conv2D(self.n_init * 16, (3, 3), padding='same', kernel_initializer=self.ki)(p4)
+        cm = self.residual_block(cm, self.n_init * 16)
+        cm = self.residual_block(cm, self.n_init * 16, batch_activation=True)
 
         # 6 -> 12
-        deconv4 = Conv2DTranspose(self.neurons_init * 8, (3, 3), (2, 2), 'same', kernel_initializer=self.ki)(convm)
-        uconv4 = concatenate([deconv4, conv4])
+        d4 = Conv2DTranspose(self.n_init * 8, (3, 3), strides=(2, 2), padding='same', kernel_initializer=self.ki)(cm)
+        u4 = concatenate([d4, c4])
         if self.dropout_contraction:
-            uconv4 = Dropout(rate=self.dropout_ratios_contraction[0])(uconv4)
+            u4 = Dropout(rate=self.dropout_ratios_contraction[0])(u4)
 
-        uconv4 = Conv2D(self.neurons_init * 8, (3, 3), padding='same', kernel_initializer=self.ki)(uconv4)
-        uconv4 = self.residual_block(uconv4, self.neurons_init * 8)
-        uconv4 = self.residual_block(uconv4, self.neurons_init * 8, batch_activation=True)
+        u4 = Conv2D(self.n_init * 8, (3, 3), padding='same', kernel_initializer=self.ki)(u4)
+        u4 = self.residual_block(u4, self.n_init * 8)
+        u4 = self.residual_block(u4, self.n_init * 8, batch_activation=True)
 
         # 12 -> 25
-        deconv3 = Conv2DTranspose(self.neurons_init * 4, (3, 3), (2, 2), 'valid', kernel_initializer=self.ki)(uconv4)
-        uconv3 = concatenate([deconv3, conv3])
+        d3 = Conv2DTranspose(self.n_init * 4, (3, 3), strides=(2, 2), padding='valid', kernel_initializer=self.ki)(u4)
+        u3 = concatenate([d3, c3])
         if self.dropout_contraction:
-            uconv3 = Dropout(rate=self.dropout_ratios_contraction[1])(uconv3)
+            u3 = Dropout(rate=self.dropout_ratios_contraction[1])(u3)
 
-        uconv3 = Conv2D(self.neurons_init * 4, (3, 3), padding='same', kernel_initializer=self.ki)(uconv3)
-        uconv3 = self.residual_block(uconv3, self.neurons_init * 4)
-        uconv3 = self.residual_block(uconv3, self.neurons_init * 4, batch_activation=True)
+        u3 = Conv2D(self.n_init * 4, (3, 3), padding='same', kernel_initializer=self.ki)(u3)
+        u3 = self.residual_block(u3, self.n_init * 4)
+        u3 = self.residual_block(u3, self.n_init * 4, batch_activation=True)
 
         # 25 -> 50
-        deconv2 = Conv2DTranspose(self.neurons_init * 2, (3, 3), (2, 2), 'same', kernel_initializer=self.ki)(uconv3)
-        uconv2 = concatenate([deconv2, conv2])
+        d2 = Conv2DTranspose(self.n_init * 2, (3, 3), strides=(2, 2), padding='same', kernel_initializer=self.ki)(u3)
+        u2 = concatenate([d2, c2])
         if self.dropout_contraction:
-            uconv2 = Dropout(rate=self.dropout_ratios_contraction[2])(uconv2)
+            u2 = Dropout(rate=self.dropout_ratios_contraction[2])(u2)
 
-        uconv2 = Conv2D(self.neurons_init * 2, (3, 3), 'same', kernel_initializer=self.ki)(uconv2)
-        uconv2 = self.residual_block(uconv2, self.neurons_init * 2)
-        uconv2 = self.residual_block(uconv2, self.neurons_init * 2, batch_activation=True)
+        u2 = Conv2D(self.n_init * 2, (3, 3), padding='same', kernel_initializer=self.ki)(u2)
+        u2 = self.residual_block(u2, self.n_init * 2)
+        u2 = self.residual_block(u2, self.n_init * 2, batch_activation=True)
 
         # 50 -> 101
-        deconv1 = Conv2DTranspose(self.neurons_init, (3, 3), (2, 2), 'valid', kernel_initializer=self.ki)(uconv2)
-        uconv1 = concatenate([deconv1, conv1])
+        d1 = Conv2DTranspose(self.n_init, (3, 3), strides=(2, 2), padding='valid', kernel_initializer=self.ki)(u2)
+        u1 = concatenate([d1, c1])
         if self.dropout_contraction:
-            uconv1 = Dropout(rate=self.dropout_ratios_contraction[3])(uconv1)
+            u1 = Dropout(rate=self.dropout_ratios_contraction[3])(u1)
 
-        uconv1 = Conv2D(self.neurons_init, (3, 3), padding='same', kernel_initializer=self.ki)(uconv1)
-        uconv1 = self.residual_block(uconv1, self.neurons_init)
-        uconv1 = self.residual_block(uconv1, self.neurons_init, batch_activation=True)
+        u1 = Conv2D(self.n_init, (3, 3), padding='same', kernel_initializer=self.ki)(u1)
+        u1 = self.residual_block(u1, self.n_init)
+        u1 = self.residual_block(u1, self.n_init, batch_activation=True)
 
         # Output layer
-        output_layer = Conv2D(1, (1, 1), padding='same', kernel_initializer=self.ki)(uconv1)
+        output_layer = Conv2D(1, (1, 1), padding='same', kernel_initializer=self.ki)(u1)
         output_layer = Activation('sigmoid')(output_layer)
 
         return output_layer
@@ -179,9 +182,13 @@ class UNetResNet:
 
         :param train: Training DataFrame generated by `construct_data()`.
         """
-        if self.use_saved_model:
+        if self.use_saved_model and os.path.exists(self.save_path):
+            print('Loading saved copy of model 1...')
+            get_custom_objects().update({'get_iou_round1': get_iou_round1})
             self.model = load_model(self.save_path)
             return
+
+        print('Fitting model 1...')
 
         if self.final:
             x_train = np.array(train['image'].tolist()).reshape(-1, 101, 101, 1)
