@@ -21,7 +21,7 @@ import numpy as np
 from keras.preprocessing.image import load_img
 
 from utilities import Logger, encode
-from models import UNetResNet
+from models import UNetResNet, ResNet50
 
 
 def main():
@@ -51,11 +51,19 @@ def main():
         # Model 1: U-Net with ResNet blocks
         print('Model 1: U-Net with ResNet blocks')
         model1 = UNetResNet(parameters['model_parameters']['unet_resnet'])
-        model1.fit_model(train)
+        model1.train(train)
         print('Making predictions...')
-        x_test = np.array(test['image'].tolist()).reshape(-1, 101, 101, 1)
-        predictions, optimal_cutoff = model1.predict(x_test)
-        predictions = np.round(predictions > optimal_cutoff)
+        predictions, optimal_cutoff1 = model1.predict(test['image'])
+        predictions = np.round(predictions > optimal_cutoff1)
+
+    if 'resnet50' in parameters['models_to_include']:
+        # Model 2: ResNet34
+        print('Model 2: ResNet34 with pretrained weights')
+        model2 = ResNet50(parameters['model_parameters']['resnet50'])
+        model2.train(train)
+        print('Making predictions...')
+        predictions, optimal_cutoff2 = model2.predict(test['image'])
+        predictions = np.round(predictions > optimal_cutoff2)
 
     assert predictions
 

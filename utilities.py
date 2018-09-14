@@ -31,16 +31,24 @@ class Logger:
         pass
 
 
-def resize_image(image, size=101):
+def upsample(image):
     """
-    Resizes an image to a square image with width `size`. If necessary, pads the
-    edges of the photo with a single constant value.
+    Resizes an image to a square 128x128 image by padding the edges.
 
-    :param image: 2-dimensional array of pixel values.
-    :param size: Intger width of the resized image.
-    :return: 2-dimensional array of pixel values with dimensions (size, size).
+    :param image: 101x101 array of pixel values.
+    :return: 128x128 array of pixel values.
     """
-    return resize(image, output_shape=(size, size), mode='constant', preserve_range=True)
+    return resize(image, output_shape=(128, 128), mode='constant', preserve_range=True)
+
+
+def downsample(image):
+    """
+    Resizes an image to a square 101x101 image by padding the edges.
+
+    :param image: 128x128 array of pixel values.
+    :return: 101x101 array of pixel values.
+    """
+    return resize(image, output_shape=(101, 101), mode='constant', preserve_range=True)
 
 
 def get_optimal_cutoff(y_scores, y_true):
@@ -107,7 +115,7 @@ def competition_metric(true, pred):
     return np.mean(metric)
 
 
-def iou_stage1(y_true, y_scores):
+def iou(y_true, y_scores):
     """
     TensorFlow wrapper for `competition_metric()`.
 
@@ -118,7 +126,7 @@ def iou_stage1(y_true, y_scores):
     return tf.py_func(competition_metric, [y_true, y_scores > 0.5], tf.float64)
 
 
-def iou_stage2(y_true, y_scores):
+def iou_no_sigmoid(y_true, y_scores):
     """
     TensorFlow wrapper for `competition_metric()`.
 

@@ -26,7 +26,6 @@
       "use_saved_model": true,
       "save_path": "output/model1.model",
       "optimal_cutoff": 0.5,
-      "verbosity": 2,
       "k_folds": 5,
       "kernel_initializer": "glorot_normal",
       "neurons_initial": 16,
@@ -46,6 +45,23 @@
       "dropout_ratios_expansion": [0.25, 0.50, 0.50, 0.50],
       "dropout_contraction": true,
       "dropout_ratios_contraction": [0.50, 0.50, 0.50, 0.50]
+    },
+    "resnet50": {
+      "final": false,
+      "use_saved_model": true,
+      "save_path": "output/resnet50.model",
+      "pretrained_weights_path": "data/resnet50baseweights.h5",
+      "optimal_cutoff": 0.5,
+      "k_folds": 5,
+      "kernel_initializer": "he_normal",
+      "neurons_initial": 16,
+      "batchnorm_momentum": 0.99,
+      "optimizer": "adam",
+      "lr": 0.01,
+      "optimizer_momentum": 0.0,
+      "early_stopping": 20,
+      "batch_size_stage": 32,
+      "epochs": 50
     }
   }
 }
