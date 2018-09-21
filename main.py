@@ -21,7 +21,8 @@ import numpy as np
 from keras.preprocessing.image import load_img
 
 from utilities import Logger, encode
-from models import UNetResNet, ResNet50
+from models.CustomResNet import CustomResNet
+from models.ResNet50 import ResNet50
 
 
 def main():
@@ -48,8 +49,8 @@ def main():
     train, test = construct_data(parameters['filepaths'])
 
     if 'unet_resnet' in parameters['models_to_include']:
-        # Model 1: U-Net with ResNet blocks
-        print('Model 1: U-Net with ResNet blocks')
+        # Model 1: U-Net with CustomResNet blocks
+        print('Model 1: U-Net with CustomResNet blocks')
         model1 = UNetResNet(parameters['model_parameters']['unet_resnet'])
         model1.train(train)
         print('Making predictions...')

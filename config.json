@@ -15,14 +15,15 @@
     "saved_train": "output/train.pk",
     "saved_test": "output/test.pk",
     "logfile": "output/log-{}",
-    "submission": "output/submission.csv"
+    "submission": "output/submission{}.csv"
   },
-  "models_to_include": [
-    "unet_resnet"
+  "models_to_run": [
+    "ResNet",
+    "ResNet50"
   ],
+  "final_predictions": false,
   "model_parameters": {
-    "unet_resnet": {
-      "final": false,
+    "ResNet": {
       "use_saved_model": true,
       "save_path": "output/model1.model",
       "optimal_cutoff": 0.5,
@@ -46,8 +47,7 @@
       "dropout_contraction": true,
       "dropout_ratios_contraction": [0.50, 0.50, 0.50, 0.50]
     },
-    "resnet50": {
-      "final": false,
+    "ResNet50": {
       "use_saved_model": true,
       "save_path": "output/resnet50.model",
       "pretrained_weights_path": "data/resnet50baseweights.h5",
