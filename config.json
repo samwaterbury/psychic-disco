@@ -1,31 +1,28 @@
 {
-  "mandatory_directories": [
-    "data/",
-    "output/",
-    "data/train/images",
-    "data/train/masks",
-    "data/test/images"
-  ],
-  "filepaths": {
+  "paths": {
+    "dir_data": "data/",
+    "dir_output": "output/",
+    "dir_train_images": "data/train/images",
+    "dir_train_masks": "data/train/masks",
+    "dir_test_images": "data/test/images",
     "train_image": "data/train/images/{}.png",
     "test_image": "data/test/images/{}.png",
     "train_mask": "data/train/masks/{}.png",
-    "depths_df": "data/depths.csv",
-    "train_df": "data/train.csv",
+    "df_depths": "data/depths.csv",
+    "df_train": "data/train.csv",
     "saved_train": "output/train.pk",
     "saved_test": "output/test.pk",
+    "saved_model": "output/{}.model",
     "logfile": "output/log-{}",
-    "submission": "output/submission{}.csv"
+    "submission": "output/submission_less sub {}.csv"
   },
-  "models_to_run": [
-    "ResNet",
-    "ResNet50"
-  ],
   "final_predictions": false,
+  "models_to_run": [
+    "CustomResNet"
+  ],
   "model_parameters": {
-    "ResNet": {
-      "use_saved_model": true,
-      "save_path": "output/model1.model",
+    "CustomResNet": {
+      "use_saved_model": false,
       "optimal_cutoff": 0.5,
       "k_folds": 5,
       "kernel_initializer": "glorot_normal",
@@ -46,22 +43,6 @@
       "dropout_ratios_expansion": [0.25, 0.50, 0.50, 0.50],
       "dropout_contraction": true,
       "dropout_ratios_contraction": [0.50, 0.50, 0.50, 0.50]
-    },
-    "ResNet50": {
-      "use_saved_model": true,
-      "save_path": "output/resnet50.model",
-      "pretrained_weights_path": "data/resnet50baseweights.h5",
-      "optimal_cutoff": 0.5,
-      "k_folds": 5,
-      "kernel_initializer": "he_normal",
-      "neurons_initial": 16,
-      "batchnorm_momentum": 0.99,
-      "optimizer": "adam",
-      "lr": 0.01,
-      "optimizer_momentum": 0.0,
-      "early_stopping": 20,
-      "batch_size_stage": 32,
-      "epochs": 50
     }
   }
 }

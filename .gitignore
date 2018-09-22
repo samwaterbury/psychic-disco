@@ -5,3 +5,5 @@ data/test/*
 output/
 experiments/
 __pycache__/
+data/depths.csv
+data/train.csv

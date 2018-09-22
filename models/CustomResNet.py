@@ -6,6 +6,7 @@ GitHub: https://github.com/samwaterbury/salt-identification
 """
 
 import numpy as np
+import pandas as pd
 
 from keras.models import Model, load_model
 from keras.layers import Input, Add, Activation, BatchNormalization, Dropout
@@ -14,34 +15,40 @@ from keras.layers.pooling import MaxPooling2D
 from keras.layers.merge import concatenate
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 from keras.optimizers import adam, sgd
-from keras.utils.generic_utils import get_custom_objects
 
 from utilities import iou, iou_no_sigmoid, lovasz_loss, get_optimal_cutoff
-from models.SaltModelBase import SaltModelBase
+from models.AbstractModel import AbstractModel
 
 
-class CustomResNet(SaltModelBase):
-    def __init__(self, parameters):
+class CustomResNet(AbstractModel):
+    def __init__(self, config):
         self.model_name = 'CustomResNet'
         self.shape = (101, 101, 1)
+        self.custom_objects = {
+            'lovasz_loss': lovasz_loss,
+            'iou_no_sigmoid': iou_no_sigmoid,
+            'iou': iou
+        }
 
-        self.parameters = parameters
+        self.parameters = config['model_parameters'][self.model_name]
+        self.save_path = config['paths']['saved_model'].format(self.model_name)
+
         self.model = None
-        self.optimal_cutoff = parameters['optimal_cutoff']
+        self.optimal_cutoff = self.parameters['optimal_cutoff']
         self.is_fitted = False
 
     def load(self, save_path=None):
-        print('Loading saved {}...'.format(self.model_name))
-        save_path = save_path if not None else self.parameters['save_path']
-        get_custom_objects().update({'iou': iou})
-        self.model = load_model(save_path)
+        save_path = self.save_path if save_path is None else save_path
+        print('Loading saved {} model from {}...'.format(self.model_name, save_path))
+        self.model = load_model(save_path, custom_objects=self.custom_objects)
         self.optimal_cutoff = self.parameters['optimal_cutoff']
 
-    def train(self, x_train, y_train, x_valid=None, y_valid=None, update_cutoff=True):
-        # TRAINING STAGE 1
+    def train(self, x_train, y_train, x_valid=None, y_valid=None):
         print('Fitting {} (stage 1)...'.format(self.model_name))
+        valid = [x_valid, y_valid] if x_valid is not None and y_valid is not None else None
+        x_train = np.concatenate((x_train, np.asarray([np.fliplr(image) for image in x_train])))
+        y_train = np.concatenate((y_train, np.asarray([np.fliplr(image) for image in y_train])))
 
-        # Set the optimizer and compile the model
         if self.parameters['optimizer_stage1'] == 'adam':
             optim1 = adam(lr=self.parameters['lr_stage1'])
         elif self.parameters['optimizer_stage1'] == 'sgd':
@@ -50,25 +57,18 @@ class CustomResNet(SaltModelBase):
             raise NotImplementedError('Optimizer should be either adam or SGD.')
         self.model.compile(optimizer=optim1, loss='binary_crossentropy', metrics=[iou])
 
-        # Callbacks
         callbacks = [
             EarlyStopping(monitor='iou', patience=self.parameters['early_stopping'], verbose=2, mode='max'),
             ReduceLROnPlateau(monitor='iou', factor=0.5, patience=5, verbose=2, mode='max', min_lr=0.0001),
-            ModelCheckpoint(self.parameters['save_path'], monitor='iou', mode='max', verbose=2, save_best_only=True)
+            ModelCheckpoint(self.save_path, monitor='iou', mode='max', verbose=2, save_best_only=True)
         ]
 
-        # Fit the model
-        valid = [x_valid, y_valid] if x_valid is not None and y_valid is not None else None
         self.model.fit(x=x_train, y=y_train, batch_size=self.parameters['batch_size_stage1'], shuffle=False,
                        epochs=self.parameters['epochs_stage1'], verbose=2, callbacks=callbacks, validation_data=valid)
 
-        # TRAINING STAGE 2
         print('Fitting {} (stage 2)...'.format(self.model_name))
-
-        # Now drop the final activation and switch to Lovasz loss function
         self.model = Model(self.model.layers[0].input, self.model.layers[-1].input)
 
-        # Compile the model (stage 2)
         if self.parameters['optimizer_stage2'] == 'adam':
             optim2 = adam(lr=self.parameters['lr_stage2'])
         elif self.parameters['optimizer_stage2'] == 'sgd':
@@ -77,35 +77,34 @@ class CustomResNet(SaltModelBase):
             raise NotImplementedError('Optimizer should be either adam or SGD.')
         self.model.compile(optimizer=optim2, loss=lovasz_loss, metrics=[iou_no_sigmoid])
 
-        # Update the callbacks
         for cb in callbacks:
             cb.monitor = 'iou_no_sigmoid'
 
         self.model.fit(x=x_train, y=y_train, batch_size=self.parameters['batch_size_stage2'], shuffle=False,
                        epochs=self.parameters['epochs_stage2'], verbose=2, callbacks=callbacks, validation_data=valid)
+        self.load(self.save_path)
 
         # Determine the optimal likelihood cutoff for segmenting images
-        if valid is not None and update_cutoff:
+        if valid is not None:
             valid_predictions = self.model.predict(x_valid)
             self.optimal_cutoff = get_optimal_cutoff(valid_predictions, y_valid)
 
     def predict(self, x):
-        x = np.array(x.tolist()).reshape(-1, 101, 101, 1)
+        print('Making predictions with {}...'.format(self.model_name))
+
         x_mirrored = np.array([np.fliplr(image) for image in x])
         predictions = self.model.predict(x).reshape(-1, 101, 101)
         predictions_mirrored = self.model.predict(x_mirrored).reshape(-1, 101, 101)
-        predictions += np.array([np.fliplr(image) for image in predictions_mirrored])
-        predictions = predictions / 2
+        predictions += np.array([np.fliplr(image) for image in predictions_mirrored]) / 2
+        return predictions
 
-        return predictions, self.optimal_cutoff
+    def preprocess(self, x):
+        if isinstance(x, pd.Series):
+            x = x.tolist()
+        return np.asarray(x).reshape(-1, 101, 101, 1)
 
-    def preprocess(self, *args):
-        for x in args:
-            pass
-
-    def postprocess(self, *args):
-        for x in args:
-            pass
+    def postprocess(self, x):
+        return x
 
     def build(self):
         input_layer = Input(shape=self.shape)
@@ -200,7 +199,7 @@ class CustomResNet(SaltModelBase):
         output_layer = Conv2D(1, (1, 1), padding='same', kernel_initializer=ki)(u1)
         output_layer = Activation('sigmoid')(output_layer)
 
-        return Model(input_layer, output_layer)
+        self.model = Model(input_layer, output_layer)
 
     @staticmethod
     def batch_activation(input_layer, bn_momentum):
@@ -209,7 +208,7 @@ class CustomResNet(SaltModelBase):
         return layer
 
     @staticmethod
-    def convolution_block(block_input, neurons, activation=True, kernel_init='he_normal', bn_momentum=0.99):
+    def convolution_block(block_input, neurons, activation=True, kernel_init='glorot_normal', bn_momentum=0.99):
         conv = Conv2D(neurons, kernel_size=(3, 3), strides=(1, 1), padding='same',
                       kernel_initializer=kernel_init)(block_input)
         if activation:

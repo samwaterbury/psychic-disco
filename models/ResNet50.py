@@ -19,10 +19,10 @@ from keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 from keras.optimizers import adam, sgd
 
 from utilities import upsample, downsample, iou, lovasz_loss, get_optimal_cutoff
-from models.SaltModelBase import SaltModelBase
+from models.AbstractModel import AbstractModel
 
 
-class ResNet50(SaltModelBase):
+class ResNet50(AbstractModel):
     def __init__(self, parameters):
         self.model_name = 'ResNet50'
         self.shape = (128, 128, 1)
@@ -43,6 +43,7 @@ class ResNet50(SaltModelBase):
 
     def build(self):
         raise NotImplementedError()
+
 
 class ResNet50(object):
     def __init__(self, parameters):

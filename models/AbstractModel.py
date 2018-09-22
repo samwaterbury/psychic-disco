@@ -5,13 +5,13 @@ Abstract class which is inherited by models in this project.
 from abc import ABC, abstractmethod
 
 
-class SaltModelBase(ABC):
+class AbstractModel(ABC):
     @abstractmethod
-    def load(self):
+    def load(self, save_path):
         raise NotImplementedError()
 
     @abstractmethod
-    def train(self, x_train, y_train, x_valid, y_valid, update_cutoff):
+    def train(self, x_train, y_train, x_valid, y_valid):
         raise NotImplementedError()
 
     @abstractmethod
