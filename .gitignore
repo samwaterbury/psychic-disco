@@ -7,3 +7,4 @@ experiments/
 __pycache__/
 data/depths.csv
 data/train.csv
+data/sample_submission.csv

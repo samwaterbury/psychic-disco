@@ -43,7 +43,9 @@ def verify_paths(config):
     mandatory_files = [
         'dir_train_images',
         'dir_train_masks',
-        'dir_test_images'
+        'dir_test_images',
+        'df_depths',
+        'df_train'
     ]
 
     paths = config['paths']

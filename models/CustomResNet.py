@@ -23,7 +23,7 @@ from models.AbstractModel import AbstractModel
 class CustomResNet(AbstractModel):
     def __init__(self, config):
         self.model_name = 'CustomResNet'
-        self.shape = (101, 101, 1)
+        self.image_width = 101
         self.custom_objects = {
             'lovasz_loss': lovasz_loss,
             'iou_no_sigmoid': iou_no_sigmoid,
@@ -98,16 +98,18 @@ class CustomResNet(AbstractModel):
         predictions += np.array([np.fliplr(image) for image in predictions_mirrored]) / 2
         return predictions
 
-    def preprocess(self, x):
+    @staticmethod
+    def preprocess(x):
         if isinstance(x, pd.Series):
             x = x.tolist()
         return np.asarray(x).reshape(-1, 101, 101, 1)
 
-    def postprocess(self, x):
+    @staticmethod
+    def postprocess(x):
         return x
 
     def build(self):
-        input_layer = Input(shape=self.shape)
+        input_layer = Input(shape=(self.image_width, self.image_width, 1))
 
         # Get the needed parameters
         n_init = self.parameters['neurons_initial']
