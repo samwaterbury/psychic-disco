@@ -22,8 +22,13 @@ from models.AbstractModel import AbstractModel
 
 class CustomResNet(AbstractModel):
     def __init__(self, config):
+        """
+        Initialize the model with the correct parameters and attributes.
+
+        :param config: Config file dictionary.
+        """
         self.model_name = 'CustomResNet'
-        self.image_width = 101
+        self.img_size = 101
         self.custom_objects = {
             'lovasz_loss': lovasz_loss,
             'iou_no_sigmoid': iou_no_sigmoid,
@@ -38,41 +43,64 @@ class CustomResNet(AbstractModel):
         self.is_fitted = False
 
     def load(self, save_path=None):
+        """
+        Load a saved CustomResNet and set it as the `model` self attribute.
+
+        :param save_path: Path to saved mode. If not supplied, use default path.
+        """
         save_path = self.save_path if save_path is None else save_path
         print('Loading saved {} model from {}...'.format(self.model_name, save_path))
         self.model = load_model(save_path, custom_objects=self.custom_objects)
         self.optimal_cutoff = self.parameters['optimal_cutoff']
 
     def train(self, x_train, y_train, x_valid=None, y_valid=None):
-        print('Fitting {} (stage 1)...'.format(self.model_name))
-        valid = [x_valid, y_valid] if x_valid is not None and y_valid is not None else None
-        x_train = np.concatenate((x_train, np.asarray([np.fliplr(image) for image in x_train])))
-        y_train = np.concatenate((y_train, np.asarray([np.fliplr(image) for image in y_train])))
+        """
+        Train the model. If validation data is supplied, use it to prevent
+        overfitting and estimate the optimal cutoff for making predictions.
 
-        if self.parameters['optimizer_stage1'] == 'adam':
-            optim1 = adam(lr=self.parameters['lr_stage1'])
-        elif self.parameters['optimizer_stage1'] == 'sgd':
-            optim1 = sgd(lr=self.parameters['lr_stage1'], momentum=self.parameters['optimizer_momentum_stage1'])
+        :param x_train: Series or list of numpy arrays containing images.
+        :param y_train: Series or list of numpy arrays containing masks.
+        :param x_valid: Series or list of numpy arrays containing images.
+        :param y_valid: Series or list of numpy arrays containing masks.
+        """
+        print('Fitting {} (stage 1)...'.format(self.model_name))
+        if x_valid is None and y_valid is None:
+            valid = None
+        else:
+            valid = [x_valid, y_valid]
+            x_valid = self.preprocess(x_valid)
+            y_train = self.preprocess(y_train)
+        x_train = self.preprocess(x_train)
+        y_train = self.preprocess(y_train)
+        x_train = np.append(x_train, np.asarray([np.fliplr(image) for image in x_train]), axis=0)
+        y_train = np.append(y_train, np.asarray([np.fliplr(image) for image in y_train]), axis=0)
+
+        if self.parameters['optim_1'] == 'adam':
+            optim1 = adam(lr=self.parameters['lr_1'])
+        elif self.parameters['optim_1'] == 'sgd':
+            optim1 = sgd(lr=self.parameters['lr_1'], momentum=self.parameters['optim_momentum_1'])
         else:
             raise NotImplementedError('Optimizer should be either adam or SGD.')
         self.model.compile(optimizer=optim1, loss='binary_crossentropy', metrics=[iou])
 
         callbacks = [
-            EarlyStopping(monitor='iou', patience=self.parameters['early_stopping'], verbose=2, mode='max'),
-            ReduceLROnPlateau(monitor='iou', factor=0.5, patience=5, verbose=2, mode='max', min_lr=0.0001),
-            ModelCheckpoint(self.save_path, monitor='iou', mode='max', verbose=2, save_best_only=True)
+            EarlyStopping(monitor='iou', patience=self.parameters['early_stopping'], verbose=2),
+            ReduceLROnPlateau(monitor='iou', factor=0.5, patience=5, verbose=2, min_lr=0.0001),
+            ModelCheckpoint(self.save_path, monitor='iou', verbose=2, save_best_only=True)
         ]
 
-        self.model.fit(x=x_train, y=y_train, batch_size=self.parameters['batch_size_stage1'], shuffle=False,
-                       epochs=self.parameters['epochs_stage1'], verbose=2, callbacks=callbacks, validation_data=valid)
+        self.model.fit(x=x_train, y=y_train, batch_size=self.parameters['batch_size_1'],
+                       epochs=self.parameters['epochs_1'], verbose=2, callbacks=callbacks,
+                       validation_data=valid)
+        load_model(self.save_path)
 
         print('Fitting {} (stage 2)...'.format(self.model_name))
         self.model = Model(self.model.layers[0].input, self.model.layers[-1].input)
 
-        if self.parameters['optimizer_stage2'] == 'adam':
-            optim2 = adam(lr=self.parameters['lr_stage2'])
-        elif self.parameters['optimizer_stage2'] == 'sgd':
-            optim2 = sgd(lr=self.parameters['lr_stage2'], momentum=self.parameters['optimizer_momentum_stage2'])
+        if self.parameters['optim_2'] == 'adam':
+            optim2 = adam(lr=self.parameters['lr_2'])
+        elif self.parameters['optim_2'] == 'sgd':
+            optim2 = sgd(lr=self.parameters['lr_2'], momentum=self.parameters['optim_momentum_2'])
         else:
             raise NotImplementedError('Optimizer should be either adam or SGD.')
         self.model.compile(optimizer=optim2, loss=lovasz_loss, metrics=[iou_no_sigmoid])
@@ -80,36 +108,53 @@ class CustomResNet(AbstractModel):
         for cb in callbacks:
             cb.monitor = 'iou_no_sigmoid'
 
-        self.model.fit(x=x_train, y=y_train, batch_size=self.parameters['batch_size_stage2'], shuffle=False,
-                       epochs=self.parameters['epochs_stage2'], verbose=2, callbacks=callbacks, validation_data=valid)
+        self.model.fit(x=x_train, y=y_train, batch_size=self.parameters['batch_size_stage2'],
+                       epochs=self.parameters['epochs_stage2'], verbose=2, callbacks=callbacks,
+                       alidation_data=valid)
         self.load(self.save_path)
 
         # Determine the optimal likelihood cutoff for segmenting images
         if valid is not None:
-            valid_predictions = self.model.predict(x_valid)
+            valid_predictions = self.predict(x_valid)
             self.optimal_cutoff = get_optimal_cutoff(valid_predictions, y_valid)
 
     def predict(self, x):
-        print('Making predictions with {}...'.format(self.model_name))
+        """
+        Make predictions for a set of images.
 
-        x_mirrored = np.array([np.fliplr(image) for image in x])
+        :param x: Array of images with shape (n, 101, 101, 1).
+        :return: Array of pixel "probabilities" with shape (n, 101, 101).
+        """
+        print('Making predictions with {}...'.format(self.model_name))
+        x_flip = np.array([np.fliplr(image) for image in x])
         predictions = self.model.predict(x).reshape(-1, 101, 101)
-        predictions_mirrored = self.model.predict(x_mirrored).reshape(-1, 101, 101)
-        predictions += np.array([np.fliplr(image) for image in predictions_mirrored]) / 2
+        predictions_mirrored = self.model.predict(x_flip).reshape(-1, 101, 101)
+        predictions += np.array([np.fliplr(image) for image in predictions_mirrored])
+        predictions = predictions / 2
         return predictions
 
-    @staticmethod
-    def preprocess(x):
+    def preprocess(self, x):
+        """
+        Flatten a list of arrays so that it can be processed by the network.
+
+        :param x: List or Series of 101x101 numpy arrays.
+        :return: Numpy array with shape (n, 101, 101, 1).
+        """
         if isinstance(x, pd.Series):
             x = x.tolist()
-        return np.asarray(x).reshape(-1, 101, 101, 1)
+        return np.array(x).reshape(-1, self.img_size, self.img_size, 1)
 
-    @staticmethod
-    def postprocess(x):
+    def postprocess(self, x):
+        """
+        No postprocessing needed for this model.
+        """
         return x
 
     def build(self):
-        input_layer = Input(shape=(self.image_width, self.image_width, 1))
+        """
+        Construct the entire network and save it as the `model` self attribute.
+        """
+        input_layer = Input(shape=(self.img_size, self.img_size, 1))
 
         # Get the needed parameters
         n_init = self.parameters['neurons_initial']
@@ -121,36 +166,37 @@ class CustomResNet(AbstractModel):
         bn_momentum = self.parameters['batchnorm_momentum']
 
         # 101 -> 50
-        c1 = Conv2D(n_init, (3, 3), padding='same', kernel_initializer=ki)(input_layer)
-        c1 = CustomResNet.residual_block(c1, n_init, False, bn_momentum)
-        c1 = CustomResNet.residual_block(c1, n_init, True, bn_momentum)
+        c1 = Conv2D(n_init * 1, (3, 3), padding='same',
+                    kernel_initializer='glorot_uniform')(input_layer)
+        c1 = CustomResNet.residual_block(c1, n_init * 1, False, bn_momentum)
+        c1 = CustomResNet.residual_block(c1, n_init * 1, True, bn_momentum)
         p1 = MaxPooling2D(pool_size=(2, 2))(c1)
         if use_expansion_dropout:
             p1 = Dropout(rate=do_ratios_exp[0], seed=1)(p1)
 
         # 50 -> 25
-        c2 = Conv2D(n_init * 2, (3, 3), padding='same', kernel_initializer=ki)(p1)
+        c2 = Conv2D(n_init * 2, (3, 3), padding='same', kernel_initializer='glorot_uniform')(p1)
         c2 = CustomResNet.residual_block(c2, n_init * 2, False, bn_momentum)
         c2 = CustomResNet.residual_block(c2, n_init * 2, True, bn_momentum)
         p2 = MaxPooling2D(pool_size=(2, 2))(c2)
         if use_expansion_dropout:
-            p2 = Dropout(rate=do_ratios_exp[1])(p2)
+            p2 = Dropout(rate=do_ratios_exp[1], seed=1)(p2)
 
         # 25 -> 12
-        c3 = Conv2D(n_init * 4, (3, 3), padding='same', kernel_initializer=ki)(p2)
+        c3 = Conv2D(n_init * 4, (3, 3), padding='same', kernel_initializer='glorot_uniform')(p2)
         c3 = CustomResNet.residual_block(c3, n_init * 4, False, bn_momentum)
         c3 = CustomResNet.residual_block(c3, n_init * 4, True, bn_momentum)
         p3 = MaxPooling2D(pool_size=(2, 2))(c3)
         if use_expansion_dropout:
-            p3 = Dropout(rate=do_ratios_exp[2])(p3)
+            p3 = Dropout(rate=do_ratios_exp[2], seed=1)(p3)
 
         # 12 -> 6
-        c4 = Conv2D(n_init * 8, (3, 3), padding='same', kernel_initializer=ki)(p3)
+        c4 = Conv2D(n_init * 8, (3, 3), padding='same', kernel_initializer='glorot_uniform')(p3)
         c4 = CustomResNet.residual_block(c4, n_init * 8, False, bn_momentum)
         c4 = CustomResNet.residual_block(c4, n_init * 8, True, bn_momentum)
         p4 = MaxPooling2D(pool_size=(2, 2))(c4)
         if use_expansion_dropout:
-            p4 = Dropout(rate=do_ratios_exp[3])(p4)
+            p4 = Dropout(rate=do_ratios_exp[3], seed=1)(p4)
 
         # Middle
         cm = Conv2D(n_init * 16, (3, 3), padding='same', kernel_initializer=ki)(p4)
@@ -158,71 +204,97 @@ class CustomResNet(AbstractModel):
         cm = CustomResNet.residual_block(cm, n_init * 16, True, bn_momentum)
 
         # 6 -> 12
-        d4 = Conv2DTranspose(n_init * 8, (3, 3), strides=(2, 2), padding='same', kernel_initializer=ki)(cm)
+        d4 = Conv2DTranspose(n_init * 8, (3, 3), (2, 2), 'same', kernel_initializer=ki)(cm)
         u4 = concatenate([d4, c4])
         if use_contraction_dropout:
-            u4 = Dropout(rate=do_ratios_con[0])(u4)
+            u4 = Dropout(rate=do_ratios_con[0], seed=1)(u4)
 
         u4 = Conv2D(n_init * 8, (3, 3), padding='same', kernel_initializer=ki)(u4)
         u4 = CustomResNet.residual_block(u4, n_init * 8, False, bn_momentum)
         u4 = CustomResNet.residual_block(u4, n_init * 8, True, bn_momentum)
 
         # 12 -> 25
-        d3 = Conv2DTranspose(n_init * 4, (3, 3), strides=(2, 2), padding='valid', kernel_initializer=ki)(u4)
+        d3 = Conv2DTranspose(n_init * 4, (3, 3), (2, 2), 'same', kernel_initializer=ki)(u4)
         u3 = concatenate([d3, c3])
         if use_contraction_dropout:
-            u3 = Dropout(rate=do_ratios_con[1])(u3)
+            u3 = Dropout(rate=do_ratios_con[1], seed=1)(u3)
 
         u3 = Conv2D(n_init * 4, (3, 3), padding='same', kernel_initializer=ki)(u3)
         u3 = CustomResNet.residual_block(u3, n_init * 4, False, bn_momentum)
         u3 = CustomResNet.residual_block(u3, n_init * 4, True, bn_momentum)
 
         # 25 -> 50
-        d2 = Conv2DTranspose(n_init * 2, (3, 3), strides=(2, 2), padding='same', kernel_initializer=ki)(u3)
+        d2 = Conv2DTranspose(n_init * 2, (3, 3), (2, 2), 'same', kernel_initializer=ki)(u3)
         u2 = concatenate([d2, c2])
         if use_contraction_dropout:
-            u2 = Dropout(rate=do_ratios_con[2])(u2)
+            u2 = Dropout(rate=do_ratios_con[2], seed=1)(u2)
 
         u2 = Conv2D(n_init * 2, (3, 3), padding='same', kernel_initializer=ki)(u2)
         u2 = CustomResNet.residual_block(u2, n_init * 2, False, bn_momentum)
         u2 = CustomResNet.residual_block(u2, n_init * 2, True, bn_momentum)
 
         # 50 -> 101
-        d1 = Conv2DTranspose(n_init, (3, 3), strides=(2, 2), padding='valid', kernel_initializer=ki)(u2)
+        d1 = Conv2DTranspose(n_init * 1, (3, 3), (2, 2), 'same', kernel_initializer=ki)(u2)
         u1 = concatenate([d1, c1])
         if use_contraction_dropout:
-            u1 = Dropout(rate=do_ratios_con[3])(u1)
+            u1 = Dropout(rate=do_ratios_con[3], seed=1)(u1)
 
-        u1 = Conv2D(n_init, (3, 3), padding='same', kernel_initializer=ki)(u1)
-        u1 = CustomResNet.residual_block(u1, n_init, False, bn_momentum)
-        u1 = CustomResNet.residual_block(u1, n_init, True, bn_momentum)
+        u1 = Conv2D(n_init * 2, (3, 3), padding='same', kernel_initializer=ki)(u1)
+        u1 = CustomResNet.residual_block(u1, n_init * 1, False, bn_momentum)
+        u1 = CustomResNet.residual_block(u1, n_init * 1, True, bn_momentum)
 
         # Output layer
-        output_layer = Conv2D(1, (1, 1), padding='same', kernel_initializer=ki)(u1)
-        output_layer = Activation('sigmoid')(output_layer)
+        output = Conv2D(1, (1, 1), padding='same', kernel_initializer=ki)(u1)
+        output = Activation('sigmoid')(output)
 
-        self.model = Model(input_layer, output_layer)
+        self.model = Model(input_layer, output)
 
     @staticmethod
-    def batch_activation(input_layer, bn_momentum):
-        layer = BatchNormalization(momentum=bn_momentum)(input_layer)
+    def batch_activation(block_input, bn_momentum):
+        """
+        Apply batch normalization and RELU.
+
+        :param block_input: Keras layer.
+        :param bn_momentum: Real number in range (0, 1); standard value is 0.99.
+        :return: Keras layer.
+        """
+        layer = BatchNormalization(momentum=bn_momentum)(block_input)
         layer = Activation('relu')(layer)
         return layer
 
     @staticmethod
-    def convolution_block(block_input, neurons, activation=True, kernel_init='glorot_normal', bn_momentum=0.99):
-        conv = Conv2D(neurons, kernel_size=(3, 3), strides=(1, 1), padding='same',
-                      kernel_initializer=kernel_init)(block_input)
-        if activation:
-            conv = CustomResNet.batch_activation(conv, bn_momentum)
-        return conv
+    def convolution_block(block_input, filters, use_activation=True, bn_momentum=0.99):
+        """
+        Convolution followed by optional batch normalization and RELU.
+
+        :param block_input: Keras layer.
+        :param filters: Number of filters/neurons for convolution.
+        :param use_activation: Boolean indicating whether to use BN and RELU.
+        :param bn_momentum: Real number in range (0, 1); standard value is 0.99.
+        :return: Keras layer.
+        """
+        layer = Conv2D(filters, kernel_size=(3, 3), strides=(1, 1), padding='same',
+                       kernel_initializer='glorot_normal')(block_input)
+        if use_activation:
+            layer = CustomResNet.batch_activation(layer, bn_momentum)
+        return layer
 
     @staticmethod
-    def residual_block(block_input, neurons, activation=False, bn_momentum=0.99):
+    def residual_block(block_input, filters, use_activation=False, bn_momentum=0.99):
+        """
+        RELU -> Convolution -> RELU -> Convolution -> Add -> Optional RELU
+
+        :param block_input: Keras layer.
+        :param filters: Number of filters/neurons for convolution.
+        :param use_activation: Boolean indicating whether to end with BN & RELU.
+        :param bn_momentum: Real number in range (0, 1); standard value is 0.99.
+        :return: Keras layer.
+        """
         layer = CustomResNet.batch_activation(block_input, bn_momentum)
-        layer = CustomResNet.convolution_block(layer, neurons)
-        layer = CustomResNet.convolution_block(layer, neurons, activation=False)
+        layer = CustomResNet.convolution_block(layer, filters, bn_momentum=bn_momentum)
+        layer = CustomResNet.convolution_block(layer, filters, use_activation=False,
+                                               bn_momentum=bn_momentum)
         layer = Add()([layer, block_input])
-        if activation:
+        if use_activation:
             layer = CustomResNet.batch_activation(layer, bn_momentum)
         return layer

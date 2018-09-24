@@ -24,6 +24,7 @@ from keras.preprocessing.image import load_img
 
 from utilities import Logger, encode
 from models.CustomResNet import CustomResNet
+from models.ResNet34 import ResNet34
 from models.ResNet50 import ResNet50
 
 
@@ -130,17 +131,12 @@ def get_model(model_name, config, train):
         model.load(save_path)
     elif config['final_predictions']:
         model.build()
-        x_train = model.preprocess(train['image'])
-        y_train = model.preprocess(train['mask'])
-        model.train(x_train, y_train)
+        model.train(train['image'], train['mask'])
     else:
         model.build()
-        x_train = model.preprocess(train['image'])
-        y_train = model.preprocess(train['mask'])
-        x_train, x_valid, y_train, y_valid = train_test_split(x_train, y_train, random_state=1,
-                                                              stratify=train['coverage_class'])
-        model.train(x_train, y_train, x_valid, y_valid)
-
+        split = train_test_split(train['image'], train['mask'], random_state=1,
+                                 test_size=1 / model_parameters['k_folds'], stratify=train['coverage_class'])
+        model.train(*split)
     return model
 
 
@@ -172,9 +168,9 @@ def main():
     for model in models:
         y = model.predict(model.preprocess(x_test))
         y = np.round(y > model.optimal_cutoff)
-        print('Optimal cutoff for {} is {}.'.format(model.model_name, model.optimal_cutoff))
         y = model.postprocess(y)
         predictions.append(y)
+        print('Optimal cutoff for {} is {}.'.format(model.model_name, model.optimal_cutoff))
     y_final = np.mean(predictions, axis=0)
 
     final = pd.DataFrame.from_dict({

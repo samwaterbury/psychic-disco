@@ -18,12 +18,12 @@ class AbstractModel(ABC):
     def predict(self, x):
         raise NotImplementedError()
 
-    @staticmethod
-    def preprocess(x):
+    @abstractmethod
+    def preprocess(self, x):
         raise NotImplementedError()
 
-    @staticmethod
-    def postprocess(x):
+    @abstractmethod
+    def postprocess(self, x):
         raise NotImplementedError()
 
     @abstractmethod
