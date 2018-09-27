@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#
+
 # Set up the project directory for execution, and download the data if needed.
 #
 # NOTE: Before you can use this script to download the data, you need to install
@@ -16,20 +16,23 @@ fi
 if [ ! -d "output" ]; then mkdir "output"; fi
 if [ ! -d "data" ]; then mkdir "data"; fi
 if [ ! -d "data/train" ]; then mkdir "data/train"; fi
+if [ ! -d "data/train/images" ]; then mkdir "data/train/images"; fi
+if [ ! -d "data/train/masks" ]; then mkdir "data/train/masks"; fi
 if [ ! -d "data/test" ]; then mkdir "data/test"; fi
+if [ ! -d "data/test/images" ]; then mkdir "data/test/images"; fi
 
 # Check if the data is missing
 missing_data=false
-declare -a dirs=("data/train/images" "data/train/masks" "data/test/images")
-for dir in "${dirs[@]}"; do
-    if [ ! -d ${dir} ]; then mkdir "$dir"; fi
-    if [ -z "$(ls -A ${dir})" ]; then missing_data=true; fi
-done
+if [ -z "$(ls -A data/train/images)" ]; then missing_data=true; fi
+if [ -z "$(ls -A data/train/masks)" ]; then missing_data=true; fi
+if [ -z "$(ls -A data/test/images)" ]; then missing_data=true; fi
+if [ ! -f "data/train.csv" ]; then missing_data=true; fi
+if [ ! -f "data/depths.csv" ]; then missing_data=true; fi
 
 # If the data is missing, download it from Kaggle
 if [ ${missing_data} = true ]; then
     kaggle competitions download tgs-salt-identification-challenge -p data/
-    if [[ (! -f "data/train.zip") || (! -f "data/test.zip") ]]; then exit 1; fi
+    if [ ! -f "data/train.zip" ]; then exit 1; fi
     unzip data/train.zip -d data/train/
     unzip data/test.zip -d data/test/
     rm data/train.zip

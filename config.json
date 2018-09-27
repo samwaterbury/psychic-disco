@@ -23,7 +23,7 @@
   "model_parameters": {
     "CustomResNet": {
       "use_saved_model": false,
-      "optimal_cutoff": 0.5,
+      "optimal_cutoff": 0.50,
       "k_folds": 5,
       "kernel_initializer": "glorot_normal",
       "neurons_initial": 16,

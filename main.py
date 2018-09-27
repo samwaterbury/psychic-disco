@@ -28,35 +28,85 @@ from models.ResNet34 import ResNet34
 from models.ResNet50 import ResNet50
 
 
+def main():
+    """
+    Runs all of the steps in sequence and saves the final predictions to a file.
+    """
+
+    # Get the config file for this run
+    config_path = sys.argv[1] if len(sys.argv) > 1 else 'config.json'
+    with open(config_path, mode='r') as config_file:
+        config = json.load(config_file)
+
+    # Write to the terminal and log file simultaneously
+    sys.stdout = Logger(sys.stdout, log_path=config['paths']['logfile'])
+
+    # Construct the dataset after verifying we have what we need
+    if not verify_paths(config):
+        print('Some of the required directories or data files could not be found.\n'
+              'Before running this file, run `setup.sh` to create/download them.')
+        sys.exit(1)
+    train, test = construct_data(config)
+
+    # Modeling
+    models = []
+    for model_name in config['models_to_run']:
+        models.append(get_model(model_name, config, train))
+
+    # Predictions
+    x_test = test['image']
+    predictions = []
+    for model in models:
+        print('Making predictions with {}...'.format(model.model_name))
+        y = model.predict(model.preprocess(x_test))
+        y = np.round(y > model.optimal_cutoff)
+        y = model.postprocess(y)
+        predictions.append(y)
+        print('Optimal cutoff for {} is {}.'.format(model.model_name, model.optimal_cutoff))
+    y_final = predictions[0]  # np.mean(predictions, axis=0)
+
+    print('Encoding and saving final predictions...')
+    final = pd.DataFrame.from_dict({
+        index: encode(y_final[row_number]) for row_number, index in enumerate(test.index.values)
+    }, orient='index')
+    final.index.names = ['id']
+    final.columns = ['rle_mask']
+    final.to_csv(config['paths']['submission'].format(datetime.now().strftime('%Y%m%d_%I%M%p')))
+
+    print('Done!')
+    sys.exit(0)
+
+
 def verify_paths(config):
     """
     Verifies that the necessary files and subdirectories are present.
 
     :param config: Config file dictionary.
+    :return: True if all paths and files exist, False otherwise.
     """
-    mandatory_subdirectories = [
-        'dir_data',
+    must_exist = [
         'dir_output',
-        'dir_train_images',
-        'dir_train_masks',
-        'dir_test_images'
-    ]
-    mandatory_files = [
+        'dir_data',
         'dir_train_images',
         'dir_train_masks',
         'dir_test_images',
         'df_depths',
         'df_train'
     ]
+    must_not_be_empty = [
+        'dir_train_images',
+        'dir_train_masks',
+        'dir_test_images'
+    ]
 
     paths = config['paths']
-    for item in mandatory_subdirectories:
+    for item in must_exist:
         if not os.path.exists(paths[item]):
-            os.mkdir(paths[item])
-    for item in mandatory_files:
+            return False
+    for item in must_not_be_empty:
         if not os.listdir(paths[item]):
-            raise FileNotFoundError('Need to download the data first! Please check the readme.')
-    return
+            return False
+    return True
 
 
 def construct_data(config):
@@ -92,7 +142,7 @@ def construct_data(config):
     df_train['mask'] = [np.array(load_img(paths['train_mask'].format(i), color_mode='grayscale'))
                         / 255 for i in df_train.index]
     # (Testing images)
-    print('Reading testing images...')
+    print('Reading test images...')
     df_test['image'] = [np.array(load_img(paths['test_image'].format(i), color_mode='grayscale'))
                         / 255 for i in df_test.index]
 
@@ -128,6 +178,7 @@ def get_model(model_name, config, train):
 
     save_path = config['paths']['saved_model'].format(model.model_name)
     if model_parameters['use_saved_model'] and os.path.exists(save_path):
+        print('Loading saved {} model from {}...'.format(model.model_name, save_path))
         model.load(save_path)
     elif config['final_predictions']:
         model.build()
@@ -135,50 +186,10 @@ def get_model(model_name, config, train):
     else:
         model.build()
         split = train_test_split(train['image'], train['mask'], random_state=1,
-                                 test_size=1 / model_parameters['k_folds'], stratify=train['coverage_class'])
+                                 test_size=(1 / model_parameters['k_folds']),
+                                 stratify=train['coverage_class'])
         model.train(*split)
     return model
-
-
-def main():
-    """
-    Runs all of the steps in sequence and saves the final predictions to a file.
-    """
-
-    # Get the config file for this run
-    config_path = sys.argv[1] if len(sys.argv) > 1 else 'config.json'
-    with open(config_path, mode='r') as config_file:
-        config = json.load(config_file)
-
-    # Write to the terminal and log file simultaneously
-    sys.stdout = Logger(sys.stdout, log_path=config['paths']['logfile'])
-
-    # Construct the dataset after verifying we have what we need
-    verify_paths(config)
-    train, test = construct_data(config)
-
-    # Modeling
-    models = []
-    for model_name in config['models_to_run']:
-        models.append(get_model(model_name, config, train))
-
-    # Predictions
-    x_test = test['image']
-    predictions = []
-    for model in models:
-        y = model.predict(model.preprocess(x_test))
-        y = np.round(y > model.optimal_cutoff)
-        y = model.postprocess(y)
-        predictions.append(y)
-        print('Optimal cutoff for {} is {}.'.format(model.model_name, model.optimal_cutoff))
-    y_final = np.mean(predictions, axis=0)
-
-    final = pd.DataFrame.from_dict({
-        index: encode(y_final[row_number]) for row_number, index in enumerate(test.index.values)
-    }, orient='index')
-    final.index.names = ['id']
-    final.columns = ['rle_mask']
-    final.to_csv(config['paths']['submission'].format(datetime.now().strftime('%Y%m%d_%I%M%p')))
 
 
 if __name__ == '__main__':

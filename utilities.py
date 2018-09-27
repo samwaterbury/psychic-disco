@@ -5,6 +5,7 @@ Author: Sam Waterbury
 GitHub: https://github.com/samwaterbury/salt-identification
 """
 
+import os
 from datetime import datetime
 
 import numpy as np
@@ -19,6 +20,8 @@ class Logger:
     """
     def __init__(self, stdout, log_path):
         self.terminal = stdout
+        if not os.path.exists(os.path.dirname(log_path)):
+            os.mkdir(os.path.dirname(log_path))
         self.log = open(log_path.format(datetime.now().strftime('%Y%m%d-%I-%M-%p')), 'a')
 
     def write(self, message):
