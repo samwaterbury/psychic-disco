@@ -4,85 +4,141 @@ Kaggle. Information about the competition can be found here:
 
 https://www.kaggle.com/c/tgs-salt-identification-challenge
 
-The approach used here is an ensemble of convolutional neural networks. For a
-more in-depth description of the project and approach, see `README.md`.
+The approach used here is a convolutional neural network trained separately on
+5 folds and then averaged. For a more in-depth description of the project and
+approach, see `README.md`.
 
 Author: Sam Waterbury
 GitHub: https://github.com/samwaterbury/salt-identification
 """
 
+from datetime import datetime
 import os
 import sys
 import json
 import pickle
+
 import numpy as np
 import pandas as pd
-from datetime import datetime
-
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold
 from keras.preprocessing.image import load_img
 
-from utilities import Logger, encode
-from models.CustomResNet import CustomResNet
-from models.ResNet34 import ResNet34
-from models.ResNet50 import ResNet50
+from model import CustomResNet
+
+DEFAULT_CONFIG = {
+    'paths': {
+        'dir_data': 'data/',
+        'dir_output': 'output/',
+        'dir_train_images': 'data/train/images/',
+        'dir_train_masks': 'data/train/masks/',
+        'dir_test_images': 'data/test/images/',
+        'df_depths': 'data/depths.csv',
+        'df_train': 'data/train.csv',
+        'saved_train': 'output/train.pk',
+        'saved_test': 'output/test.pk',
+        'logfile': 'output/log-{}',
+        'submission': 'output/'
+    }
+}
+
+
+class Logger(object):
+    """Writes all output to the terminal and a logfile simultaneously."""
+    def __init__(self, stdout, log_path):
+        self.stdout = stdout
+        if not os.path.exists(os.path.dirname(log_path)):
+            os.mkdir(os.path.dirname(log_path))
+        self.log = open(log_path.format(datetime.now().strftime('%Y%m%d-%I:%M:%p')), 'a')
+
+    def write(self, message):
+        self.stdout.write(message)
+        self.log.write(message)
+
+    def flush(self):
+        pass
 
 
 def main():
-    """
-    Runs all of the steps in sequence and saves the final predictions to a file.
-    """
-
-    # Get the config file for this run
-    config_path = sys.argv[1] if len(sys.argv) > 1 else 'config.json'
-    with open(config_path, mode='r') as config_file:
-        config = json.load(config_file)
+    """Runs all of the steps and saves the final predictions to a file."""
+    config = DEFAULT_CONFIG
+    if len(sys.argv) > 1:
+        with open(sys.argv[1], mode='r') as config_file:
+            config.update(json.load(config_file))
 
     # Write to the terminal and log file simultaneously
     sys.stdout = Logger(sys.stdout, log_path=config['paths']['logfile'])
 
     # Construct the dataset after verifying we have what we need
     if not verify_paths(config):
-        print('Some of the required directories or data files could not be found.\n'
-              'Before running this file, run `setup.sh` to create/download them.')
+        print('Some of the required directories or data files could not be '
+              'found.\nBefore running this file, run `setup.sh` to create/'
+              'download them.')
         sys.exit(1)
     train, test = construct_data(config)
 
     # Modeling
+    model_parameters = config.get('CustomResNet', {})
+    k_folds = model_parameters.get('k_folds', 1)
+
+    # Split the training data into K groups, stratifying by coverage
+    skf = StratifiedKFold(n_splits=k_folds, random_state=1, shuffle=True)
+    split = skf.split(train.index.values, train['cov_class'])
+    train_index_folds = []
+    valid_index_folds = []
+    for train_indices, valid_indices in split:
+        train_index_folds.append(train_indices)
+        valid_index_folds.append(valid_indices)
+    folds = zip(train_index_folds, valid_index_folds)
+
     models = []
-    for model_name in config['models_to_run']:
-        models.append(get_model(model_name, config, train))
+    for i, train_indices, valid_indices in enumerate(folds):
+        print('Constructing model {}...'.format(i))
 
-    # Predictions
+        model = CustomResNet(name='CustomResNet_{}'.format(i), **config)
+        if not model.is_fitted:
+            model.train(x_train=train.loc[train_indices, 'image'],
+                        y_train=train.loc[train_indices, 'mask'],
+                        x_valid=train.loc[valid_indices, 'image'],
+                        y_valid=train.loc[valid_indices, 'mask'])
+        models.append(model)
+
+    # Make predictions with each model
     x_test = test['image']
-    predictions = []
-    for model in models:
-        print('Making predictions with {}...'.format(model.model_name))
-        y = model.predict(model.preprocess(x_test))
-        y = np.round(y > model.optimal_cutoff)
-        y = model.postprocess(y)
-        predictions.append(y)
-        print('Optimal cutoff for {} is {}.'.format(model.model_name, model.optimal_cutoff))
-    y_final = predictions[0]  # np.mean(predictions, axis=0)
+    y_test = np.zeros(np.squeeze(x_test).shape)
+    for i, model in enumerate(models):
+        print('Making predictions with model {}...'.format(i))
+        y_test += model.predict(model.preprocess(x_test))
 
+    # Take the average
+    optimal_cutoff = np.mean(model.optimal_cutoff for model in models)
+    print('Optimal cutoff is {}.'.format(optimal_cutoff))
+    y_test /= k_folds
+    y_test = np.round(y_test > optimal_cutoff)
+
+    # Encode the predictions in the submission format
     print('Encoding and saving final predictions...')
-    final = pd.DataFrame.from_dict({
-        index: encode(y_final[row_number]) for row_number, index in enumerate(test.index.values)
-    }, orient='index')
+    final = {}
+    for row_number, idx in enumerate(test.index.values):
+        final[idx] = encode(y_test[row_number])
+    final = pd.DataFrame.from_dict(final, orient='index')
     final.index.names = ['id']
     final.columns = ['rle_mask']
-    final.to_csv(config['paths']['submission'].format(datetime.now().strftime('%Y%m%d_%I%M%p')))
 
+    final_path = os.path.join(
+        config['paths']['submission'],
+        'submission-{}.csv'.format(datetime.now().strftime('%Y%m%d_%I%M%p')))
+    final.to_csv(final_path)
     print('Done!')
-    sys.exit(0)
 
 
 def verify_paths(config):
-    """
-    Verifies that the necessary files and subdirectories are present.
+    """Verifies that the necessary files and subdirectories are present.
 
-    :param config: Config file dictionary.
-    :return: True if all paths and files exist, False otherwise.
+    Args:
+        config: Dictionary with configuration settings.
+
+    Returns:
+        True if all paths are correct and files exist, False otherwise.
     """
     must_exist = [
         'dir_output',
@@ -110,11 +166,19 @@ def verify_paths(config):
 
 
 def construct_data(config):
-    """
-    Loads or recreates the entire dataset and returns the test and train sets.
+    """Loads or recreates the entire dataset.
 
-    :param config: Config file dictionary.
-    :return: `train` and `test` DataFrames containing images, masks, etc.
+    Args:
+        config: Config file dictionary.
+
+    Returns:
+        `train` and `test` DataFrames containing the following columns:
+            id: Unique identifier for each image/mask pair.
+            z: Depth at which the image was taken.
+            image: 101x101 array of image pixel values.
+            mask: 101x101 array of mask pixel values (only in `train`).
+            coverage: % of the image containing salt (only in `train`).
+            cov_class: Value 1-10 corresponding to coverage (only in `train`).
     """
     paths = config['paths']
 
@@ -149,7 +213,7 @@ def construct_data(config):
     # Calculate the coverage for the training images
     # Then, bin the images into discrete classes corresponding to their coverage
     df_train['coverage'] = df_train['mask'].map(np.sum) / pow(101, 2)
-    df_train['coverage_class'] = df_train['coverage'].map(lambda cov: np.int(np.ceil(cov * 10)))
+    df_train['cov_class'] = df_train['coverage'].map(lambda cov: np.int(np.ceil(cov * 10)))
 
     # Write to file
     print('Saving the constructed dataset...')
@@ -164,32 +228,19 @@ def construct_data(config):
     return df_train, df_test
 
 
-def get_model(model_name, config, train):
-    """
-    Constructs, loads/trains, and then returns an instance of a model.
+def encode(image):
+    """Encodes an image array in the proper string format for submission.
 
-    :param model_name: Name of the model's class.
-    :param config: Config file dictionary.
-    :param train: Training DataFrame generated by `construct_dataset()`.
-    :return: A fitted instance of the model's class, ready to make predictions.
-    """
-    model_parameters = config['model_parameters'][model_name]
-    model = eval(model_name)(config)
+    Args:
+        image: 2-dimensional mask array with pixel values in {0,1}.
 
-    save_path = config['paths']['saved_model'].format(model.model_name)
-    if model_parameters['use_saved_model'] and os.path.exists(save_path):
-        print('Loading saved {} model from {}...'.format(model.model_name, save_path))
-        model.load(save_path)
-    elif config['final_predictions']:
-        model.build()
-        model.train(train['image'], train['mask'])
-    else:
-        model.build()
-        split = train_test_split(train['image'], train['mask'], random_state=1,
-                                 test_size=(1 / model_parameters['k_folds']),
-                                 stratify=train['coverage_class'])
-        model.train(*split)
-    return model
+    Returns:
+        String containing formatted pixel coordinates.
+    """
+    pixels = np.concatenate([[0], image.flatten(order='F'), [0]])
+    runs = np.where(pixels[1:] != pixels[:-1])[0] + 1
+    runs[1::2] -= runs[::2]
+    return ' '.join(str(i) for i in runs)
 
 
 if __name__ == '__main__':

@@ -5,54 +5,12 @@ Author: Sam Waterbury
 GitHub: https://github.com/samwaterbury/salt-identification
 """
 
-import os
-from datetime import datetime
-
 import numpy as np
 import tensorflow as tf
-from skimage.transform import resize
 from keras import backend
 
 
-class Logger:
-    """
-    Writes all output to the terminal as well as a logfile.
-    """
-    def __init__(self, stdout, log_path):
-        self.terminal = stdout
-        if not os.path.exists(os.path.dirname(log_path)):
-            os.mkdir(os.path.dirname(log_path))
-        self.log = open(log_path.format(datetime.now().strftime('%Y%m%d-%I-%M-%p')), 'a')
-
-    def write(self, message):
-        self.terminal.write(message)
-        self.log.write(message)
-
-    def flush(self):
-        pass
-
-
-def upsample(image):
-    """
-    Resizes an image to a square 128x128 image by padding the edges.
-
-    :param image: 101x101 array of pixel values.
-    :return: 128x128 array of pixel values.
-    """
-    return resize(image, output_shape=(128, 128), mode='constant', preserve_range=True)
-
-
-def downsample(image):
-    """
-    Resizes an image to a square 101x101 image by padding the edges.
-
-    :param image: 128x128 array of pixel values.
-    :return: 101x101 array of pixel values.
-    """
-    return resize(image, output_shape=(101, 101), mode='constant', preserve_range=True)
-
-
-def get_optimal_cutoff(y_scores, y_true):
+def get_cutoff(y_scores, y_true):
     """
     Determines the cutoff above which pixels should be added to the mask which
     maximizes the expected competition score.
@@ -72,19 +30,6 @@ def get_optimal_cutoff(y_scores, y_true):
         metric_evaluations.append(np.mean(metric))
     metric_evaluations = np.array(metric_evaluations)
     return cutoffs[np.argmax(metric_evaluations)]
-
-
-def encode(image):
-    """
-    Encodes an image array in the proper string format for submission.
-
-    :param image: 2-dimensional mask array with pixel values in {0,1}.
-    :return: String containing formatted pixel coordinates.
-    """
-    pixels = np.concatenate([[0], image.flatten(order='F'), [0]])
-    runs = np.where(pixels[1:] != pixels[:-1])[0] + 1
-    runs[1::2] -= runs[::2]
-    return ' '.join(str(i) for i in runs)
 
 
 def competition_metric(true, pred):
@@ -116,7 +61,7 @@ def competition_metric(true, pred):
     return np.mean(metric)
 
 
-def iou(y_true, y_scores):
+def iou_sigmoid(y_true, y_scores):
     """
     TensorFlow wrapper for `competition_metric()`.
 
