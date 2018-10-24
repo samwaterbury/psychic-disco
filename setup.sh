@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-# Set up the project directory for execution, and download the data if needed.
+# Sets up the project directory for execution, and download the data if needed.
+# This script will put the project directory in the DEFAULT configuration; see
+# the global variable `DEFAULT_CONFIG` near the start of `main.py`.
 #
 # NOTE: Before you can use this script to download the data, you need to install
 #       the Kaggle API. Instructions for doing so can be found here:
@@ -33,8 +35,8 @@ if [ ! -f "data/depths.csv" ]; then missing_data=true; fi
 if [ ${missing_data} = true ]; then
     kaggle competitions download tgs-salt-identification-challenge -p data/
     if [ ! -f "data/train.zip" ]; then exit 1; fi
-    unzip data/train.zip -d data/train/
-    unzip data/test.zip -d data/test/
+    unzip -q data/train.zip -d data/train/
+    unzip -q data/test.zip -d data/test/
     rm data/train.zip
     rm data/test.zip
 fi
