@@ -5,7 +5,7 @@
 The goal of this competition was to identify and segment salt deposits in
 seismic images. The data includes (1) the seismic images, (2) masks showing the
 portions of the training images containing salt, and (3) the depths at which
-each image was taken. For an in-depth explanation of the contest, see the
+each of the images were taken. For an in-depth explanation of the contest, see the
 official
 [Kaggle page](https://www.kaggle.com/c/tgs-salt-identification-challenge).
 

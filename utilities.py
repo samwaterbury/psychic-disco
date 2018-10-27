@@ -1,5 +1,5 @@
 """
-This file implements several functions used throughout the project.
+This file implements several functions used by CustomResNet in `model.py`.
 
 Author: Sam Waterbury
 GitHub: https://github.com/samwaterbury/salt-identification
@@ -11,13 +11,22 @@ from keras import backend
 
 
 def get_cutoff(y_scores, y_true):
-    """
-    Determines the cutoff above which pixels should be added to the mask which
-    maximizes the expected competition score.
+    """Finds the optimal cutoff point to use when classifying pixels.
 
-    :param y_scores: 2-dimensional arrays of pixel scores.
-    :param y_true: True masks corresponding to the arrays in `y_scores`.
-    :return: Approximate optimal cutoff between 0.3 and 0.7.
+    The model produces scores between -Inf and Inf for each pixel. To make
+    predictions, the pixels need to be labeled 0 or 1 based on whether their
+    scores are less than or greater than some cutoff value.
+
+    Instead of using a cutoff of 0, this function tests many different potential
+    cutoff points between ln(0.3) and ln(0.7) using validation data and a close
+    approximator of the official competition scoring metric.
+
+    Args:
+        y_scores: (101, 101) arrays of pixel scores.
+        y_true: (101, 101) arrays of the true masks.
+
+    Returns:
+        Approximate estimate of the optimal cutoff value.
     """
     cutoffs = np.linspace(0.3, 0.7, 31)
     cutoffs = np.log(cutoffs / (1 - cutoffs))
@@ -33,16 +42,20 @@ def get_cutoff(y_scores, y_true):
 
 
 def competition_metric(true, pred):
-    """
-    The official scoring metric for this competition is given by the mean of
+    """Official scoring metric for the competition.
+
+    The competition accuracy score is given by the mean of
 
         Metric(t) = #TruePos(t) / [#TruePos(t) + #FalsePos(t) + #FalseNeg(t)]
 
     evaluated at thresholds t = {0.05, 0.10, ..., 0.90, 0.95}.
 
-    :param true: Numpy array of true mask.
-    :param pred: Numpy array of predicted mask.
-    :return: Mean of Metric(t) evaluated at all thresholds.
+    Args:
+        true: Numpy array of true mask.
+        pred: Numpy array of predicted mask.
+
+    Returns:
+        Mean of Metric(t) evaluated at all thresholds.
     """
     batch_size = true.shape[0]
     metric = []
@@ -62,35 +75,40 @@ def competition_metric(true, pred):
 
 
 def iou_sigmoid(y_true, y_scores):
-    """
-    TensorFlow wrapper for `competition_metric()`.
+    """TensorFlow wrapper for `competition_metric()`.
 
-    :param y_scores: 2-dimensional arrays of pixel scores.
-    :param y_true: True masks corresponding to the arrays in `y_scores`.
-    :return: Evaluation of the competition metric for `y_scores`.
+    Args:
+        y_scores: 2-dimensional arrays of pixel scores.
+        y_true: True masks corresponding to the arrays in `y_scores`.
+
+    Returns:
+        Evaluation of the competition metric for `y_scores`.
     """
     return tf.py_func(competition_metric, [y_true, y_scores > 0.5], tf.float64)
 
 
 def iou_no_sigmoid(y_true, y_scores):
-    """
-    TensorFlow wrapper for `competition_metric()`.
+    """TensorFlow wrapper for `competition_metric()`.
 
-    :param y_scores: 2-dimensional arrays of pixel scores.
-    :param y_true: True masks corresponding to the arrays in `y_scores`.
-    :return: Evaluation of the competition metric for `y_scores`.
+    Args:
+        y_scores: 2-dimensional arrays of pixel scores.
+        y_true: True masks corresponding to the arrays in `y_scores`.
+
+    Returns:
+        Evaluation of the competition metric for `y_scores`.
     """
     return tf.py_func(competition_metric, [y_true, y_scores > 0.], tf.float64)
 
 
 def lovasz_loss(y_true, y_pred):
-    """
-    Lovasz loss is a suitable proxy for the competition metric to use during
-    model training.
+    """Suitable proxy for the competition metric to use during model training.
 
-    :param y_true: True masks corresponding to the arrays in `y_scores`.
-    :param y_pred: 2-dimensional arrays of pixel scores.
-    :return:
+    Args:
+        y_true: True masks corresponding to the arrays in `y_scores`.
+        y_pred: 2-dimensional arrays of pixel scores.
+
+    Returns:
+        Loss value.
     """
     y_true = backend.cast(backend.squeeze(y_true, -1), 'int32')
     y_pred = backend.cast(backend.squeeze(y_pred, -1), 'float32')

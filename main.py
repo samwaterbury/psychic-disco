@@ -5,7 +5,7 @@ Kaggle. Information about the competition can be found here:
 https://www.kaggle.com/c/tgs-salt-identification-challenge
 
 The approach used here is a convolutional neural network trained separately on
-5 folds and then averaged. For a more in-depth description of the project and
+k folds and then averaged. For a more in-depth description of the project and
 approach, see `README.md`.
 
 Author: Sam Waterbury
