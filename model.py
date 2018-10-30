@@ -48,15 +48,17 @@ class CustomResNet(object):
         custom_objects: Custom functions used during the training process.
         parameters: Dictionary containing all of the model parameters.
     """
-    def __init__(self, name=None, **kwargs):
+    def __init__(self, name=None, output=None, **kwargs):
         """Initializes the model with the correct parameters and attributes.
 
         Args:
             name: Optional, used to save model weights.
+            output: Directory to save all output to (e.g., saved model weights).
             **kwargs: See `set_parameters` for a list of parameters you can set.
         """
         self.name = name if name else 'CustomResNet-{}'.format(
             datetime.now().strftime('%Y%m%d_%I%M%p'))
+        self.output_dir = output
         self.model = None
         self.is_fitted = False
         self.stage = 0
@@ -101,7 +103,8 @@ class CustomResNet(object):
         """
         _parameters = {
             'load_model': False,
-            'save_path': 'output/saved_weights.model',
+            'save_name': os.path.join(self.output_dir,
+                                      'saved_{}.model'.format(self.name)),
             'optimal_cutoff': 0.,
             'initial_neurons': 16,
             'kernel_initializer': 'he_normal',
@@ -112,9 +115,9 @@ class CustomResNet(object):
             'stage1_lr': 0.01,
             'stage2_lr': 0.0005,
             'stage3_lr': 0.0001,
-            'stage1_epochs': 500,
-            'stage2_epochs': 200,
-            'stage3_epochs': 50
+            'stage1_epochs': 10,  # This is too few epochs to get good results,
+            'stage2_epochs': 10,  # but it will run in a reasonable amount of
+            'stage3_epochs': 10   # time and give a good idea of how it works.
         }
         _parameters.update(self.parameters)
         _parameters.update(kwargs)
@@ -131,13 +134,13 @@ class CustomResNet(object):
         if not os.path.exists(save_path):
             raise FileNotFoundError('Could not find the saved model at {}'
                                     .format(save_path))
-        if self.stage == 1:
+        if self.stage <= 1:
             self.remove_sigmoid()
         self.model = load_model(save_path, custom_objects=self.custom_objects)
         self.is_fitted = True
 
     @staticmethod
-    def preprocess(x):
+    def process(x):
         """Flattens a list of arrays so that it can be processed by the network.
 
         Args:
@@ -162,13 +165,13 @@ class CustomResNet(object):
         print('Fitting model (stage 1)...')
 
         if x_valid is not None and y_train is not None:
-            valid = [self.preprocess(x_valid), self.preprocess(y_valid)]
+            valid = [self.process(x_valid), self.process(y_valid)]
         else:
             valid = None
 
         # Preprocess the training data and add horizontal flip augmentations
-        x_train = self.preprocess(x_train)
-        y_train = self.preprocess(y_train)
+        x_train = self.process(x_train)
+        y_train = self.process(y_train)
         x_train = np.append(x_train, [np.fliplr(i) for i in x_train], axis=0)
         y_train = np.append(y_train, [np.fliplr(i) for i in y_train], axis=0)
 
@@ -225,6 +228,7 @@ class CustomResNet(object):
                        callbacks=callbacks,
                        verbose=2)
         self.load(self.parameters['save_path'])
+        self.stage = 3
 
         # Determine the optimal likelihood cutoff for segmenting images
         if valid:
@@ -245,15 +249,18 @@ class CustomResNet(object):
             Array of pixel "probabilities" with shape (n, 101, 101).
         """
         # Flip all of the images horizontally
-        x_flip = np.array([np.fliplr(i) for i in x])
+        x = self.process(x)
+        x_flip = self.process([np.fliplr(i) for i in x])
 
         # Make predicitons on the original images and the flipped images
         predictions = self.model.predict(x).reshape(-1, 101, 101)
         predictions_flip = self.model.predict(x_flip).reshape(-1, 101, 101)
+        predictions_flip = [np.fliplr(i) for i in predictions_flip]
+        predictions_flip = np.array(predictions_flip).reshape(-1, 101, 101)
 
         # Take the average
-        predictions += np.array([np.fliplr(i) for i in predictions_flip])
-        predictions = predictions / 2
+        predictions += predictions_flip
+        predictions /= 2
         return predictions
 
     def build(self):
@@ -276,7 +283,7 @@ class CustomResNet(object):
 
         # 101 -> 50
         c1 = Conv2D(n_init * 1, (3, 3), padding='same',
-                    kernel_initializer='glorot_uniform')(input_layer)
+                    kernel_initializer=ki)(input_layer)
         c1 = CustomResNet.residual_block(c1, n_init * 1, False, bn)
         c1 = CustomResNet.residual_block(c1, n_init * 1, True, bn)
         p1 = MaxPooling2D(pool_size=(2, 2))(c1)
@@ -284,7 +291,7 @@ class CustomResNet(object):
 
         # 50 -> 25
         c2 = Conv2D(n_init * 2, (3, 3), padding='same',
-                    kernel_initializer='glorot_uniform')(p1)
+                    kernel_initializer=ki)(p1)
         c2 = CustomResNet.residual_block(c2, n_init * 2, False, bn)
         c2 = CustomResNet.residual_block(c2, n_init * 2, True, bn)
         p2 = MaxPooling2D(pool_size=(2, 2))(c2)
@@ -292,7 +299,7 @@ class CustomResNet(object):
 
         # 25 -> 12
         c3 = Conv2D(n_init * 4, (3, 3), padding='same',
-                    kernel_initializer='glorot_uniform')(p2)
+                    kernel_initializer=ki)(p2)
         c3 = CustomResNet.residual_block(c3, n_init * 4, False, bn)
         c3 = CustomResNet.residual_block(c3, n_init * 4, True, bn)
         p3 = MaxPooling2D(pool_size=(2, 2))(c3)
@@ -300,7 +307,7 @@ class CustomResNet(object):
 
         # 12 -> 6
         c4 = Conv2D(n_init * 8, (3, 3), padding='same',
-                    kernel_initializer='glorot_uniform')(p3)
+                    kernel_initializer=ki)(p3)
         c4 = CustomResNet.residual_block(c4, n_init * 8, False, bn)
         c4 = CustomResNet.residual_block(c4, n_init * 8, True, bn)
         p4 = MaxPooling2D(pool_size=(2, 2))(c4)

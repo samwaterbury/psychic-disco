@@ -47,3 +47,6 @@ obtain the data.
 
 Then, clone this repository, run `setup.sh` to obtain the data, and run
 `main.py` to generate predictions.
+
+Lastly, you can also adjust the training parameters in the configuration file
+and run `python main.py config.json` to use those settings.

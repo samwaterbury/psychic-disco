@@ -20,7 +20,7 @@ import pickle
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from keras.preprocessing.image import load_img
 
 from model import CustomResNet
@@ -34,21 +34,15 @@ DEFAULT_CONFIG = {
         'dir_test_images': 'data/test/images/',
         'df_depths': 'data/depths.csv',
         'df_train': 'data/train.csv',
-        'saved_train': 'output/train.pk',
-        'saved_test': 'output/test.pk',
-        'logfile': 'output/log-{}',
-        'submission': 'output/'
     }
 }
 
 
 class Logger(object):
     """Writes all output to the terminal and a logfile simultaneously."""
-    def __init__(self, stdout, log_path):
+    def __init__(self, stdout, logfile):
         self.stdout = stdout
-        if not os.path.exists(os.path.dirname(log_path)):
-            os.mkdir(os.path.dirname(log_path))
-        self.log = open(log_path.format(datetime.now().strftime('%Y%m%d-%I:%M:%p')), 'a')
+        self.log = open(logfile, mode='a')
 
     def write(self, message):
         self.stdout.write(message)
@@ -60,13 +54,17 @@ class Logger(object):
 
 def main():
     """Runs all of the steps and saves the final predictions to a file."""
+    run_datetime = datetime.now().strftime('%Y%m%d_%I%M%p')
     config = DEFAULT_CONFIG
     if len(sys.argv) > 1:
         with open(sys.argv[1], mode='r') as config_file:
             config.update(json.load(config_file))
 
     # Write to the terminal and log file simultaneously
-    sys.stdout = Logger(sys.stdout, log_path=config['paths']['logfile'])
+    if not os.path.exists(config['paths']['dir_output']):
+        os.mkdir(config['paths']['dir_output'])
+    sys.stdout = Logger(sys.stdout, logfile=os.path.join(
+        config['paths']['dir_output'], run_datetime))
 
     # Construct the dataset after verifying we have what we need
     if not verify_paths(config):
@@ -79,22 +77,40 @@ def main():
     # Modeling
     model_parameters = config.get('CustomResNet', {})
     k_folds = model_parameters.get('k_folds', 1)
+    holdout = model_parameters.get('holdout_percent', 0.2)
 
     # Split the training data into K groups, stratifying by coverage
-    skf = StratifiedKFold(n_splits=k_folds, random_state=1, shuffle=True)
-    split = skf.split(train.index.values, train['cov_class'])
     train_index_folds = []
     valid_index_folds = []
+    if k_folds == 1:
+        split = train_test_split(train.index.values,
+                                 random_state=1,
+                                 test_size=holdout,
+                                 stratify=train['cov_class'])
+        split = [[split[0], split[1]]]
+    else:
+        skf = StratifiedKFold(n_splits=k_folds, random_state=1, shuffle=True)
+        split = skf.split(train.index.values, train['cov_class'])
+        _split = []
+        for train_row_numbers, valid_row_numbers in split:
+            _split.append([train.iloc[train_row_numbers].index,
+                           train.iloc[valid_row_numbers].index])
+        split = _split
+
+    # Zip the train/valid indices so they can be iterated over in parallel
     for train_indices, valid_indices in split:
         train_index_folds.append(train_indices)
         valid_index_folds.append(valid_indices)
     folds = zip(train_index_folds, valid_index_folds)
 
+    # Load or train the model(s)
     models = []
-    for i, train_indices, valid_indices in enumerate(folds):
+    for i, (train_indices, valid_indices) in enumerate(folds, start=1):
         print('Constructing model {}...'.format(i))
 
-        model = CustomResNet(name='CustomResNet_{}'.format(i), **config)
+        model = CustomResNet(name='CustomResNet_{}'.format(i),
+                             output=config['paths']['dir_output'],
+                             **model_parameters)
         if not model.is_fitted:
             model.train(x_train=train.loc[train_indices, 'image'],
                         y_train=train.loc[train_indices, 'mask'],
@@ -104,13 +120,13 @@ def main():
 
     # Make predictions with each model
     x_test = test['image']
-    y_test = np.zeros(np.squeeze(x_test).shape)
-    for i, model in enumerate(models):
+    y_test = np.zeros((len(x_test), 101, 101))
+    for i, model in enumerate(models, start=1):
         print('Making predictions with model {}...'.format(i))
-        y_test += model.predict(model.preprocess(x_test))
+        y_test += model.predict(model.process(x_test))
 
     # Take the average
-    optimal_cutoff = np.mean(model.optimal_cutoff for model in models)
+    optimal_cutoff = np.mean([model.optimal_cutoff for model in models])
     print('Optimal cutoff is {}.'.format(optimal_cutoff))
     y_test /= k_folds
     y_test = np.round(y_test > optimal_cutoff)
@@ -124,9 +140,8 @@ def main():
     final.index.names = ['id']
     final.columns = ['rle_mask']
 
-    final_path = os.path.join(
-        config['paths']['submission'],
-        'submission-{}.csv'.format(datetime.now().strftime('%Y%m%d_%I%M%p')))
+    final_path = os.path.join(config['paths']['dir_output'],
+                              'submission-{}.csv'.format(run_datetime))
     final.to_csv(final_path)
     print('Done!')
 
@@ -181,49 +196,62 @@ def construct_data(config):
             cov_class: Value 1-10 corresponding to coverage (only in `train`).
     """
     paths = config['paths']
+    save_train_path = os.path.join(config['paths']['dir_output'], 'train.pk')
+    save_test_path = os.path.join(config['paths']['dir_output'], 'test.pk')
 
     # If possible, read the constructed data from existing files
-    if os.path.exists(paths['saved_train']) and os.path.exists(paths['saved_test']):
+    if os.path.exists(save_train_path) and os.path.exists(save_test_path):
         print('Found existing saved dataset; loading it...')
-        with open(paths['saved_train'], mode='rb') as train_file:
+        with open(save_train_path, mode='rb') as train_file:
             df_train = pickle.load(train_file)
-        with open(paths['saved_test'], mode='rb') as test_file:
+        with open(save_test_path, mode='rb') as test_file:
             df_test = pickle.load(test_file)
         return df_train, df_test
 
     # Read in the CSV files and create DataFrames for train, test observations
     depths = pd.read_csv(paths['df_depths'], index_col='id')
-    df_train = pd.read_csv(paths['df_train'], index_col='id', usecols=[0]).join(depths)
+    df_train = pd.read_csv(paths['df_train'], index_col='id',
+                           usecols=[0]).join(depths)
     df_test = depths[~depths.index.isin(df_train.index)].copy()
 
     # Read the images as greyscale and normalize the pixel values to be in [0,1]
+
+    def get_image(image_path):
+        """Loads an image as a grayscale numpy array."""
+        return np.array(load_img(image_path, color_mode='grayscale')) / 255
+
     # (Training images)
     print('Reading training images...')
-    df_train['image'] = [np.array(load_img(paths['train_image'].format(i), color_mode='grayscale'))
-                         / 255 for i in df_train.index]
+    path = paths['dir_train_images'] + '{}.png'
+    df_train['image'] = [get_image(path.format(i)) for i in df_train.index]
+
     # (Training masks)
     print('Reading training masks...')
-    df_train['mask'] = [np.array(load_img(paths['train_mask'].format(i), color_mode='grayscale'))
-                        / 255 for i in df_train.index]
+    path = paths['dir_train_masks'] + '{}.png'
+    df_train['mask'] = [get_image(path.format(i)) for i in df_train.index]
+
     # (Testing images)
     print('Reading test images...')
-    df_test['image'] = [np.array(load_img(paths['test_image'].format(i), color_mode='grayscale'))
-                        / 255 for i in df_test.index]
+    path = paths['dir_test_images'] + '{}.png'
+    df_test['image'] = [get_image(path.format(i)) for i in df_test.index]
 
     # Calculate the coverage for the training images
     # Then, bin the images into discrete classes corresponding to their coverage
     df_train['coverage'] = df_train['mask'].map(np.sum) / pow(101, 2)
-    df_train['cov_class'] = df_train['coverage'].map(lambda cov: np.int(np.ceil(cov * 10)))
+    df_train['cov_class'] = df_train['coverage'].map(
+        lambda cov: np.int(np.ceil(cov * 10)))
 
     # Write to file
     print('Saving the constructed dataset...')
     try:
-        with open(paths['saved_train'], mode='wb') as train_file:
+        with open(save_train_path, mode='wb') as train_file:
             pickle.dump(df_train, train_file)
-        with open(paths['saved_test'], mode='wb') as test_file:
+        with open(save_test_path, mode='wb') as test_file:
             pickle.dump(df_test, test_file)
     except OSError:
-        print('Could not save the data due to an occasional Python bug in macOS. :(')
+        print('Could not save the data due to an occasional Python bug on some '
+              'systems. :( If this is happening on macOS, try running on Linux '
+              'instead.')
 
     return df_train, df_test
 

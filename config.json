@@ -6,16 +6,13 @@
     "dir_train_masks": "data/train/masks/",
     "dir_test_images": "data/test/images/",
     "df_depths": "data/depths.csv",
-    "df_train": "data/train.csv",
-    "saved_train": "output/train.pk",
-    "saved_test": "output/test.pk",
-    "logfile": "output/log-{}",
-    "submission": "output/submission-{}.csv"
+    "df_train": "data/train.csv"
   },
   "CustomResNet": {
     "k_folds": 5,
+    "holdout_percent": 0.2,
     "load_model": false,
-    "save_path": "CustomResNet.model",
+    "save_path": "output/CustomResNet.model",
     "optimal_cutoff": -0.15,
     "initial_neurons": 16,
     "kernel_initializer": "he_normal",
