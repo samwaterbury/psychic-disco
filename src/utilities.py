@@ -1,13 +1,71 @@
-"""
-This file implements several functions used by CustomResNet in `model.py`.
+"""Contains support functions, classes, and constants used by the project.
 
 Author: Sam Waterbury
 GitHub: https://github.com/samwaterbury/salt-identification
 """
 
+import sys
+from os import path
+
 import numpy as np
 import tensorflow as tf
 from keras import backend
+
+PROJECT_ROOT = path.abspath(path.join(path.dirname(__file__), path.pardir))
+DEFAULT_PATHS = {
+    'dir_data': path.join(PROJECT_ROOT, 'data/'),
+    'dir_output': path.join(PROJECT_ROOT, 'output/'),
+    'dir_train_images': path.join(PROJECT_ROOT, 'data/train/images/'),
+    'dir_train_masks': path.join(PROJECT_ROOT, 'data/train/masks/'),
+    'dir_test_images': path.join(PROJECT_ROOT, 'data/test/images/'),
+    'df_depths': path.join(PROJECT_ROOT, 'data/depths.csv'),
+    'df_train': path.join(PROJECT_ROOT, 'data/train.csv'),
+}
+
+
+class Logger(object):
+    """Writes to the terminal and a logfile simultaneously.
+
+    By replacing `sys.stdout` with an instance of this class, all output will
+    be printed to both the console and the specified log file. This class will
+    automatically save the original `sys.stdout` as an attribute.
+
+    Attributes:
+        stdout: The original `sys.stdout` object.
+
+    Args:
+        logfile: Filepath to be used or created for the logfile.
+    """
+    def __init__(self, logfile):
+        self.stdout = sys.stdout
+        self._log = open(logfile, mode='a')
+
+    def write(self, message):
+        self.stdout.write(message)
+        self._log.write(message)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        """Closes the logfile object and returns the original `sys.stdout`."""
+        self._log.close()
+        return self.stdout
+
+
+def encode_predictions(image):
+    """Encodes an image array in the proper string format for submission.
+
+    Args:
+        image: 2-dimensional mask array with pixel values in {0,1}.
+
+    Returns:
+        String containing formatted pixel coordinates.
+    """
+    pixels = np.concatenate([[0], image.flatten(order='F'), [0]])
+    runs = np.where(pixels[1:] != pixels[:-1])[0] + 1
+    runs[1::2] -= runs[::2]
+    return ' '.join(str(i) for i in runs)
 
 
 def get_cutoff(y_scores, y_true):
@@ -51,8 +109,8 @@ def competition_metric(true, pred):
     evaluated at thresholds t = {0.05, 0.10, ..., 0.90, 0.95}.
 
     Args:
-        true: Numpy array of true mask.
-        pred: Numpy array of predicted mask.
+        true: Numpy array containing the true mask.
+        pred: Numpy array containing the predicted mask.
 
     Returns:
         Mean of Metric(t) evaluated at all thresholds.
@@ -114,6 +172,7 @@ def lovasz_loss(y_true, y_pred):
     y_pred = backend.cast(backend.squeeze(y_pred, -1), 'float32')
     return lovasz_hinge(y_pred, y_true)
 
+
 # ---------------------------------------------------------------------------- #
 # The following code is taken from this repository:
 # https://github.com/bermanmaxim/LovaszSoftmax
@@ -139,7 +198,8 @@ def lovasz_grad(gt_sorted):
 def lovasz_hinge(logits, labels, per_image=True, ignore=None):
     """
     Binary Lovasz hinge loss
-      logits: [B, H, W] Variable, logits at each pixel (between -\infty and +\infty)
+      logits: [B, H, W] Variable, logits at each pixel (between -\infty and
+        +\infty)
       labels: [B, H, W] Tensor, binary ground truth masks (0 or 1)
       per_image: compute the loss per image instead of per batch
       ignore: void class id
@@ -160,7 +220,8 @@ def lovasz_hinge(logits, labels, per_image=True, ignore=None):
 def lovasz_hinge_flat(logits, labels):
     """
     Binary Lovasz hinge loss
-      logits: [P] Variable, logits at each prediction (between -\infty and +\infty)
+      logits: [P] Variable, logits at each prediction (between -\infty and
+        +\infty)
       labels: [P] Tensor, binary ground truth labels (0 or 1)
       ignore: label to ignore
     """
@@ -169,11 +230,13 @@ def lovasz_hinge_flat(logits, labels):
         labelsf = tf.cast(labels, logits.dtype)
         signs = 2. * labelsf - 1.
         errors = 1. - logits * tf.stop_gradient(signs)
-        errors_sorted, perm = tf.nn.top_k(errors, k=tf.shape(errors)[0], name="descending_sort")
+        errors_sorted, perm = tf.nn.top_k(errors, k=tf.shape(errors)[0],
+                                          name="descending_sort")
         gt_sorted = tf.gather(labelsf, perm)
         grad = lovasz_grad(gt_sorted)
-        loss = tf.tensordot(tf.nn.relu(errors_sorted), tf.stop_gradient(grad), 1, name="loss_non_void")
-        return loss
+        _loss = tf.tensordot(tf.nn.relu(errors_sorted), tf.stop_gradient(grad),
+                             1, name="loss_non_void")
+        return _loss
 
     # deal with the void prediction case (only void pixels)
     loss = tf.cond(tf.equal(tf.shape(logits)[0], 0),

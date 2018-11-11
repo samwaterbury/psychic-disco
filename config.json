@@ -8,11 +8,8 @@
     "df_depths": "data/depths.csv",
     "df_train": "data/train.csv"
   },
-  "CustomResNet": {
-    "k_folds": 5,
-    "holdout_percent": 0.2,
-    "load_model": false,
-    "save_path": "output/CustomResNet.model",
+  "model_parameters": {
+    "model_name": "CustomResNet",
     "optimal_cutoff": -0.15,
     "initial_neurons": 16,
     "kernel_initializer": "he_normal",
@@ -20,11 +17,15 @@
     "batchnorm_momentum": 0.99,
     "early_stopping_patience": 50,
     "batch_size": 32,
-    "stage1_lr": 0.01,
-    "stage2_lr": 0.0005,
-    "stage3_lr": 0.0001,
-    "stage1_epochs": 500,
-    "stage2_epochs": 200,
-    "stage3_epochs": 50
-  }
+    "round1_lr": 0.01,
+    "round2_lr": 0.0005,
+    "round3_lr": 0.0001,
+    "round1_epochs": 500,
+    "round2_epochs": 200,
+    "round3_epochs": 50
+  },
+  "use_saved_data": true,
+  "use_saved_models": true,
+  "k_folds": 5,
+  "holdout_percent": 0.2
 }

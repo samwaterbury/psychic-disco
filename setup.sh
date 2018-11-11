@@ -2,7 +2,7 @@
 
 # Sets up the project directory for execution, and download the data if needed.
 # This script will put the project directory in the DEFAULT configuration; see
-# the global variable `DEFAULT_CONFIG` near the start of `main.py`.
+# the global variable `DEFAULT_CONFIG` near the start of `run.py`.
 #
 # NOTE: Before you can use this script to download the data, you need to install
 #       the Kaggle API. Instructions for doing so can be found here:

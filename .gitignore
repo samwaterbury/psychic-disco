@@ -1,11 +1,6 @@
 .DS_Store
 .idea/
-data/train/*
-data/test/*
-output/
-experiments/
 __pycache__/
-data/depths.csv
-data/train.csv
-data/sample_submission.csv
+.ipynb_checkpoints/
 data/
+output/

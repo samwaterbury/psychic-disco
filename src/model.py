@@ -1,6 +1,7 @@
-"""
-Implements the custom residual network with a U-Net architecture. For more
-information about this architecture, see the following in the `papers/` folder:
+"""Implements the custom residual network which uses a U-Net architecture.
+
+For more information about this architecture, see the following in the `papers/`
+folder:
 
 - Huang et al. (2018): in-depth explanation of residual neural networks
 - Ronneberger et al. (2015): see page 2 for a visualization of a "U-Net"
@@ -10,7 +11,7 @@ GitHub: https://github.com/samwaterbury/salt-identification
 """
 
 import os
-from datetime import datetime
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -23,121 +24,107 @@ from keras.layers.pooling import MaxPooling2D
 from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 from keras.optimizers import adam
 
-from utilities import iou_sigmoid, iou_no_sigmoid, lovasz_loss, get_cutoff
+from src.utilities import DEFAULT_PATHS
+from src.utilities import iou_sigmoid, iou_no_sigmoid, lovasz_loss, get_cutoff
+
+
+DEFAULT_MODEL_PARAMETERS = {
+    'model_name': 'CustomResNet',
+    'optimal_cutoff': -0.15,  # Found through testing; approx ~= ln(0.46 / 0.54)
+    'initial_neurons': 16,
+    'kernel_initializer': 'he_normal',
+    'dropout_rate': 0.5,
+    'batchnorm_momentum': 0.99,
+    'early_stopping_patience': 50,
+    'batch_size': 32,
+    'round1_lr': 0.01,
+    'round2_lr': 0.0005,
+    'round3_lr': 0.0001,
+    'round1_epochs': 10,  # This is way too few epochs to get good results, but
+    'round2_epochs': 10,  # it will run in a reasonable amount of time and still
+    'round3_epochs': 10   # give a good idea of how it works.
+}
 
 
 class CustomResNet(object):
-    """Fully-contained residual network with a easy-to-use interface.
+    """Implements the custom residual network for this project.
 
     This class contains a custom model used for the TGS competition. It takes in
     image arrays of shape (101, 101, 1), i.e., single channel. Methods are
     provided for preprocessing, training the model, and making predictions.
 
-    `CustomResNet` relies on a set of parameters which can be set when the class
-    is initialized or whenever a function is called. For a list and descriptions
-    of these parameters, please see the method `set_parameters`.
+    `CustomResNet` relies on a set of parameters which can be passed when the
+    class is initialized or whenever a method is called.
+
+    Parameters:
+        model_name: Name for the model; used when saving model weights.
+        optimal_cutoff: Cutoff value to use when making predictions.
+        initial_neurons: # of filters at the first convolution output.
+        kernel_initializer: 'he_normal', 'glorot_normal', etc.
+        dropout_rate: % of nodes to randomly drop at each dropout layer.
+        batchnorm_momentum: "Momentum" parameter for batch normalization.
+        early_stopping_patience: Number of epochs without improvement to
+            wait before ending the fitting process.
+        batch_size: Batch size for training.
+        lr1: round 1 (binary crossentropy loss) learning rate.
+        lr2: round 2 (lovasz loss) learning rate.
+        lr3: round 3 (lovasz loss) learning rate.
+        round1_epochs: Round 1 (binary crossentropy loss) learning rate.
+        round2_epochs: Round 2 (lovasz loss) learning rate.
+        round3_epochs: Round 3 (lovasz loss) learning rate.
 
     Attributes:
-        name: Name of this model instance.
-        model: Keras `Model` object.
-        is_fitted: True if the model has been fitted, False otherwise.
-        optimal_cutoff: Cutoff value to use when making predictions.
-        stage: 0 if the model has not been built, 1 if the model is built and
-            still contains the sigmoid output layer, 2 if the sigmoid output
-            layer has been removed.
-        custom_objects: Custom functions used during the training process.
         parameters: Dictionary containing all of the model parameters.
+        custom_objects: Custom functions used during the training process.
+        model: Keras Model class containing the network layers.
+        save_path: Save location of model weights.
+        stage: Value representing the current state of the model.
+            0 - Model has been built but not fitted.
+            1 - Model has been fitted but still has the sigmoid output layer.
+            2 - Model has been fitted and the sigmoid output layer is removed.
+        optimal_cutoff: The best cutoff value to use when rounding predictions.
     """
-    def __init__(self, name=None, output=None, **kwargs):
-        """Initializes the model with the correct parameters and attributes.
-
-        Args:
-            name: Optional, used to save model weights.
-            output: Directory to save all output to (e.g., saved model weights).
-            **kwargs: See `set_parameters` for a list of parameters you can set.
-        """
-        self.name = name if name else 'CustomResNet-{}'.format(
-            datetime.now().strftime('%Y%m%d_%I%M%p'))
-        self.output_dir = output
-        self.model = None
-        self.is_fitted = False
-        self.stage = 0
+    def __init__(self, **kwargs):
+        self.parameters = DEFAULT_MODEL_PARAMETERS
+        self.parameters.update(**kwargs)
         self.custom_objects = {
             'lovasz_loss': lovasz_loss,
             'iou_no_sigmoid': iou_no_sigmoid,
             'iou_sigmoid': iou_sigmoid
         }
 
-        self.parameters = {}
-        self.set_parameters(**kwargs)
+        self.model = self.build()
+        self.save_path = os.path.join(DEFAULT_PATHS['dir_output'],
+                                      self.parameters['model_name'] + '.model')
+        self._is_fitted = False
 
-        self.build()
-        if self.parameters['load_model'] and self.stage > 0:
-            self.load(self.parameters['save_path'])
+    @property
+    def stage(self):
+        """Value representing the current model state (see class docstring)."""
+        if not self._is_fitted:
+            return 0
+        if self.model.layers[-1].name == 'sigmoid':
+            return 1
+        return 2
 
     @property
     def optimal_cutoff(self):
         """Provides cleaner external access to the optimal cutoff."""
         return self.parameters.get('optimal_cutoff', 0.)
 
-    def set_parameters(self, **kwargs):
-        """Updates the parameters for the model.
-
-        Keyword Args:
-            load_model: If True, load the model weights from `save_path`.
-            save_path: Path to the saved model weights.
-            optimal_cutoff: Cutoff value to use when making predictions.
-            initial_neurons: # of filters at the first convolution output.
-            kernel_initializer: 'he_normal', 'glorot_normal', etc.
-            dropout_rate: % of nodes to randomly drop at each dropout layer.
-            batchnorm_momentum: "Momentum" parameter for batch normalization.
-            early_stopping_patience: Number of epochs without improvement to
-                wait before ending the fitting process.
-            batch_size: Batch size for training.
-            lr1: Stage 1 (binary crossentropy loss) learning rate.
-            lr2: Stage 2 (lovasz loss) learning rate.
-            lr3: Stage 3 (lovasz loss) learning rate.
-            stage1_epochs: Stage 1 (binary crossentropy loss) learning rate.
-            stage2_epochs: Stage 2 (lovasz loss) learning rate.
-            stage3_epochs: Stage 3 (lovasz loss) learning rate.
-        """
-        _parameters = {
-            'load_model': False,
-            'save_name': os.path.join(self.output_dir,
-                                      'saved_{}.model'.format(self.name)),
-            'optimal_cutoff': 0.,
-            'initial_neurons': 16,
-            'kernel_initializer': 'he_normal',
-            'dropout_rate': 0.5,
-            'batchnorm_momentum': 0.99,
-            'early_stopping_patience': 50,
-            'batch_size': 32,
-            'stage1_lr': 0.01,
-            'stage2_lr': 0.0005,
-            'stage3_lr': 0.0001,
-            'stage1_epochs': 10,  # This is too few epochs to get good results,
-            'stage2_epochs': 10,  # but it will run in a reasonable amount of
-            'stage3_epochs': 10   # time and give a good idea of how it works.
-        }
-        _parameters.update(self.parameters)
-        _parameters.update(kwargs)
-        self.parameters = _parameters
-
-    def load(self, save_path=None):
-        """Loads a saved model.
+    def load(self, save_path):
+        """Loads a previously saved model.
 
         Args:
-            save_path: If left as None, the save path parameter will be used.
+            save_path: Path to the saved model weights.
         """
-        if save_path is None:
-            save_path = self.parameters['save_path']
         if not os.path.exists(save_path):
-            raise FileNotFoundError('Could not find the saved model at {}'
-                                    .format(save_path))
+            raise FileNotFoundError(
+                'Could not find the saved model at {}'.format(save_path))
         if self.stage <= 1:
             self.remove_sigmoid()
         self.model = load_model(save_path, custom_objects=self.custom_objects)
-        self.is_fitted = True
+        self._is_fitted = True
 
     @staticmethod
     def process(x):
@@ -151,9 +138,9 @@ class CustomResNet(object):
         """
         if isinstance(x, pd.Series):
             x = x.tolist()
-        return np.array(x).reshape(-1, 101, 101, 1)
+        return np.reshape(np.asarray(x), newshape=(-1, 101, 101, 1))
 
-    def train(self, x_train, y_train, x_valid=None, y_valid=None):
+    def train(self, x_train, y_train, x_valid=None, y_valid=None, **kwargs):
         """Trains the model and finds the optimal cutoff for predictions.
 
         Args:
@@ -161,23 +148,27 @@ class CustomResNet(object):
             x_valid: List or array of validation images.
             y_train: List or array of training masks.
             y_valid: List of array of validation masks.
+
+        Keyword Args:
+            Any class or model parameters (see class docstring).
         """
-        print('Fitting model (stage 1)...')
+        self.parameters.update(kwargs)
+        print('Fitting model (round 1)...')
 
         if x_valid is not None and y_train is not None:
-            valid = [self.process(x_valid), self.process(y_valid)]
+            validation_set = self.process(x_valid), self.process(y_valid)
         else:
-            valid = None
+            validation_set = None
 
         # Preprocess the training data and add horizontal flip augmentations
         x_train = self.process(x_train)
         y_train = self.process(y_train)
-        x_train = np.append(x_train, [np.fliplr(i) for i in x_train], axis=0)
-        y_train = np.append(y_train, [np.fliplr(i) for i in y_train], axis=0)
+        x_train = np.append(x_train, np.fliplr(x_train), axis=0)
+        y_train = np.append(y_train, np.fliplr(y_train), axis=0)
 
-        # Compile the model for stage 1
-        stage1_optim = adam(lr=self.parameters['stage1_lr'])
-        self.model.compile(optimizer=stage1_optim, loss='binary_crossentropy',
+        # Compile the model for round 1
+        round1_optim = adam(lr=self.parameters['round1_lr'])
+        self.model.compile(optimizer=round1_optim, loss='binary_crossentropy',
                            metrics=[iou_sigmoid])
 
         callbacks = [
@@ -185,59 +176,58 @@ class CustomResNet(object):
                           patience=self.parameters['early_stopping_patience']),
             ReduceLROnPlateau(monitor='iou_sigmoid', mode='max', factor=0.5,
                               patience=5, verbose=2, min_lr=0.0001),
-            ModelCheckpoint(self.parameters['save_path'], monitor='iou_sigmoid',
+            ModelCheckpoint(self.save_path, monitor='iou_sigmoid',
                             mode='max', verbose=2, save_best_only=True)
         ]
 
-        self.model.fit(x=x_train, y=y_train, validation_data=valid,
+        self.model.fit(x=x_train, y=y_train,
+                       validation_data=validation_set,
                        batch_size=self.parameters['batch_size'],
-                       epochs=self.parameters['stage1_epochs'],
+                       epochs=self.parameters['round1_epochs'],
                        callbacks=callbacks,
                        verbose=2)
-        self.load(self.parameters['save_path'])
+        self.load(self.save_path)
 
-        print('Fitting model (stage 2)...')
+        print('Fitting model (round 2)...')
 
-        # Compile the model for stage 2
+        # Compile the model for round 2
         self.remove_sigmoid()
-        stage2_optim = adam(lr=self.parameters['stage2_lr'])
-        self.model.compile(optimizer=stage2_optim, loss=lovasz_loss,
+        round2_optim = adam(lr=self.parameters['round2_lr'])
+        self.model.compile(optimizer=round2_optim, loss=lovasz_loss,
                            metrics=[iou_no_sigmoid])
 
         # Callbacks need to use the correct scoring function for the new loss
         for cb in callbacks:
             cb.monitor = 'iou_no_sigmoid'
 
-        self.model.fit(x=x_train, y=y_train, validation_data=valid,
+        self.model.fit(x=x_train, y=y_train,
+                       validation_data=validation_set,
                        batch_size=self.parameters['batch_size'],
-                       epochs=self.parameters['stage2_epochs'],
+                       epochs=self.parameters['round2_epochs'],
                        callbacks=callbacks,
                        verbose=2)
-        self.load(self.parameters['save_path'])
+        self.load(self.save_path)
 
-        print('Fitting model (stage 3)...')
+        print('Fitting model (round 3)...')
 
-        # Compile the model for stage 3
-        stage3_optim = adam(lr=self.parameters['stage3_lr'])
-        self.model.compile(optimizer=stage3_optim, loss=lovasz_loss,
+        # Compile the model for round 3
+        round3_optim = adam(lr=self.parameters['round3_lr'])
+        self.model.compile(optimizer=round3_optim, loss=lovasz_loss,
                            metrics=[iou_no_sigmoid])
 
-        self.model.fit(x=x_train, y=y_train, validation_data=valid,
+        self.model.fit(x=x_train, y=y_train,
+                       validation_data=validation_set,
                        batch_size=self.parameters['batch_size'],
-                       epochs=self.parameters['stage3_epochs'],
+                       epochs=self.parameters['round3_epochs'],
                        callbacks=callbacks,
                        verbose=2)
-        self.load(self.parameters['save_path'])
-        self.stage = 3
+        self.load(self.save_path)
 
         # Determine the optimal likelihood cutoff for segmenting images
-        if valid:
-            valid_predictions = self.predict(x_valid)
-            optimal_cutoff = get_cutoff(valid_predictions, y_valid)
-            print('Found optimal cutoff for {}: {}'.format(self.name,
-                                                           optimal_cutoff))
-            if 'optimal_cutoff' not in self.parameters:
-                self.parameters['optimal_cutoff'] = optimal_cutoff
+        if validation_set:
+            valid_predictions = self.predict(validation_set[0])
+            optimal_cutoff = get_cutoff(valid_predictions, validation_set[1])
+            self.parameters['optimal_cutoff'] = optimal_cutoff
 
     def predict(self, x):
         """Generates predictions for a set of images.
@@ -250,25 +240,38 @@ class CustomResNet(object):
         """
         # Flip all of the images horizontally
         x = self.process(x)
-        x_flip = self.process([np.fliplr(i) for i in x])
+        x_flip = np.fliplr(x)
 
         # Make predicitons on the original images and the flipped images
         predictions = self.model.predict(x).reshape(-1, 101, 101)
         predictions_flip = self.model.predict(x_flip).reshape(-1, 101, 101)
-        predictions_flip = [np.fliplr(i) for i in predictions_flip]
-        predictions_flip = np.array(predictions_flip).reshape(-1, 101, 101)
+        predictions_flip = np.fliplr(predictions_flip)
 
         # Take the average
         predictions += predictions_flip
         predictions /= 2
         return predictions
 
-    def build(self):
-        """Constructs the entire network in preparation for training/loading."""
-        n_init = self.parameters['initial_neurons']
-        ki = self.parameters['kernel_initializer']
-        do = self.parameters['dropout_rate']
-        bn = self.parameters['batchnorm_momentum']
+    @staticmethod
+    def build(initial_neurons=16, kernel_initializer='he_normal',
+              dropout_rate=0.5, bn_momentum=0.99):
+        """Constructs the entire network in preparation for training/loading.
+
+        Args:
+            initial_neurons: Number of filters at the first convolution.
+            kernel_initializer: Method of initializing the kernel weights. The
+                original paper recommends "he_normal" but "glorot_normal" works
+                well too.
+            dropout_rate: % of filters to drop in dropout layers. The standard
+                is 0.5, but a lower value might work better in this model.
+            bn_momentum: Momentum for moving mean/variance in the batch
+                normalization blocks.
+        """
+        # Line space is precious!
+        n_init = initial_neurons
+        ki = kernel_initializer
+        dr = dropout_rate
+        bn = bn_momentum
 
         # The network takes in images with the shape (101, 101, 1)
         input_layer = Input(shape=(101, 101, 1))
@@ -287,7 +290,7 @@ class CustomResNet(object):
         c1 = CustomResNet.residual_block(c1, n_init * 1, False, bn)
         c1 = CustomResNet.residual_block(c1, n_init * 1, True, bn)
         p1 = MaxPooling2D(pool_size=(2, 2))(c1)
-        p1 = Dropout(rate=do)(p1)
+        p1 = Dropout(rate=dr)(p1)
 
         # 50 -> 25
         c2 = Conv2D(n_init * 2, (3, 3), padding='same',
@@ -295,7 +298,7 @@ class CustomResNet(object):
         c2 = CustomResNet.residual_block(c2, n_init * 2, False, bn)
         c2 = CustomResNet.residual_block(c2, n_init * 2, True, bn)
         p2 = MaxPooling2D(pool_size=(2, 2))(c2)
-        p2 = Dropout(rate=do)(p2)
+        p2 = Dropout(rate=dr)(p2)
 
         # 25 -> 12
         c3 = Conv2D(n_init * 4, (3, 3), padding='same',
@@ -303,7 +306,7 @@ class CustomResNet(object):
         c3 = CustomResNet.residual_block(c3, n_init * 4, False, bn)
         c3 = CustomResNet.residual_block(c3, n_init * 4, True, bn)
         p3 = MaxPooling2D(pool_size=(2, 2))(c3)
-        p3 = Dropout(rate=do)(p3)
+        p3 = Dropout(rate=dr)(p3)
 
         # 12 -> 6
         c4 = Conv2D(n_init * 8, (3, 3), padding='same',
@@ -311,7 +314,7 @@ class CustomResNet(object):
         c4 = CustomResNet.residual_block(c4, n_init * 8, False, bn)
         c4 = CustomResNet.residual_block(c4, n_init * 8, True, bn)
         p4 = MaxPooling2D(pool_size=(2, 2))(c4)
-        p4 = Dropout(rate=do)(p4)
+        p4 = Dropout(rate=dr)(p4)
 
         # Middle block skips the pooling function and does not use dropout
         cm = Conv2D(n_init * 16, (3, 3), padding='same',
@@ -322,10 +325,10 @@ class CustomResNet(object):
         # From here on out, the image tensors are growing in size at each block
 
         # 6 -> 12
-        d4 = Conv2DTranspose(n_init * 8, (3, 3), strides=(2, 2), padding='same',
+        t4 = Conv2DTranspose(n_init * 8, (3, 3), strides=(2, 2), padding='same',
                              kernel_initializer=ki)(cm)
-        u4 = concatenate([d4, c4])
-        u4 = Dropout(rate=do)(u4)
+        u4 = concatenate([t4, c4])
+        u4 = Dropout(rate=dr)(u4)
 
         u4 = Conv2D(n_init * 8, (3, 3), padding='same',
                     kernel_initializer=ki)(u4)
@@ -333,10 +336,10 @@ class CustomResNet(object):
         u4 = CustomResNet.residual_block(u4, n_init * 8, True, bn)
 
         # 12 -> 25
-        d3 = Conv2DTranspose(n_init * 4, (3, 3), strides=(2, 2), padding='valid',
-                             kernel_initializer=ki)(u4)
-        u3 = concatenate([d3, c3])
-        u3 = Dropout(rate=do)(u3)
+        t3 = Conv2DTranspose(n_init * 4, (3, 3), strides=(2, 2),
+                             padding='valid', kernel_initializer=ki)(u4)
+        u3 = concatenate([t3, c3])
+        u3 = Dropout(rate=dr)(u3)
 
         u3 = Conv2D(n_init * 4, (3, 3), padding='same',
                     kernel_initializer=ki)(u3)
@@ -344,10 +347,10 @@ class CustomResNet(object):
         u3 = CustomResNet.residual_block(u3, n_init * 4, True, bn)
 
         # 25 -> 50
-        d2 = Conv2DTranspose(n_init * 2, (3, 3), strides=(2, 2), padding='same',
+        t2 = Conv2DTranspose(n_init * 2, (3, 3), strides=(2, 2), padding='same',
                              kernel_initializer=ki)(u3)
-        u2 = concatenate([d2, c2])
-        u2 = Dropout(rate=do)(u2)
+        u2 = concatenate([t2, c2])
+        u2 = Dropout(rate=dr)(u2)
 
         u2 = Conv2D(n_init * 2, (3, 3), padding='same',
                     kernel_initializer=ki)(u2)
@@ -355,10 +358,10 @@ class CustomResNet(object):
         u2 = CustomResNet.residual_block(u2, n_init * 2, True, bn)
 
         # 50 -> 101
-        d1 = Conv2DTranspose(n_init * 1, (3, 3), strides=(2, 2),
+        t1 = Conv2DTranspose(n_init * 1, (3, 3), strides=(2, 2),
                              padding='valid', kernel_initializer=ki)(u2)
-        u1 = concatenate([d1, c1])
-        u1 = Dropout(rate=do)(u1)
+        u1 = concatenate([t1, c1])
+        u1 = Dropout(rate=dr)(u1)
 
         u1 = Conv2D(n_init * 1, (3, 3), padding='same',
                     kernel_initializer=ki)(u1)
@@ -368,26 +371,24 @@ class CustomResNet(object):
         # Output layer
         output_layer = Conv2D(1, (1, 1), padding='same',
                               kernel_initializer=ki)(u1)
-        output_layer = Activation('sigmoid')(output_layer)
+        output_layer = Activation('sigmoid', name='sigmoid')(output_layer)
 
-        self.model = Model(input_layer, output_layer)
-        self.stage = 1
+        return Model(input_layer, output_layer)
 
     def remove_sigmoid(self):
         """Removes the sigmoid activation in the output layer of the network.
 
-        This network is trained in two stages, using a different loss function
-        in each stage. In the second stage, the sigmoid activation in the output
-        layer must be removed because the second loss function (Lovasz) requires
-        values in (-Inf, Inf) instead of [0, 1].
+        This network is trained in three rounds, using a different loss function
+        in the latter two. After the first round, the sigmoid activation in the
+        output layer must be removed because the second loss function (Lovasz)
+        requires values in (-Inf, Inf) instead of [0, 1].
         """
-        if self.stage == 2:
-            print('Model is already built for stage 2 of training.')
+        if self.stage > 1:
+            warnings.warn('The sigmoid output layer has already been removed.')
             return
         input_layer = self.model.layers[0].input
         output_layer = self.model.layers[-1].input
         self.model = Model(input_layer, output_layer)
-        self.stage = 2
 
     @staticmethod
     def batch_activation(block_input, bn_momentum):

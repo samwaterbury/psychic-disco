@@ -3,11 +3,8 @@
 ### TGS Salt Identification Challenge
 
 The goal of this competition was to identify and segment salt deposits in
-seismic images. The data includes (1) the seismic images, (2) masks showing the
-portions of the training images containing salt, and (3) the depths at which
-each of the images were taken. For an in-depth explanation of the contest, see the
-official
-[Kaggle page](https://www.kaggle.com/c/tgs-salt-identification-challenge).
+underground seismic images. For an overview of the project and my approach, see 
+`project-overview.ipynb`. The official Kaggle page can be found [here](https://www.kaggle.com/c/tgs-salt-identification-challenge).
 
 ### Final results
 
@@ -18,21 +15,28 @@ profile can be found [here](https://www.kaggle.com/samwaterbury).
 
 ### What's in this repository?
 
-The following files contain all of the code used to make my final predictions:
+The following files contain all of the code used to make the predictions:
 
-* `main.py` forms the backbone of the project. This file contains the code which
-constructs the dataset, calls the models, and writes predictions to a file.
+* `run.py` can be run from the command line to load the data, train the models,
+and make predictions. `config.json` can be passed as a command-line argument if
+you want to change the parameters.
 
-* `model.py` fully implements the deep residual network I built for this
+* `src/data.py` contains the functions necessary to construct the train and test
+datasets from the images, masks, and other raw data.
+
+* `src/model.py` fully implements the deep residual network I built for this
 competition in Tensorflow.
 
-* `utilities.py` contains several functions used by the model. This includes the
-specialized loss functions and a custom accuracy metric which matches the
+* `src/utilities.py` contains several functions used by the model. This includes
+the specialized loss functions and a custom accuracy metric which matches the
 competition's scoring mechanism.
 
 The directories `data/` and `output/` are omitted from this repository. To
-download the data and create these directories automatically,
-run `setup.sh` from the command line.
+download the data and create these directories automatically, run `setup.sh` 
+from the command line.
+
+The Jupyter notebook `overview.ipynb` gives a brief overview of the project and
+the image data.
 
 Lastly, `papers/` contains several research papers I used as references for my
 techniques and model architecture. All of these are freely available on the
