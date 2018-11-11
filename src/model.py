@@ -229,6 +229,8 @@ class CustomResNet(object):
             optimal_cutoff = get_cutoff(valid_predictions, validation_set[1])
             self.parameters['optimal_cutoff'] = optimal_cutoff
 
+        self._is_fitted = True
+
     def predict(self, x):
         """Generates predictions for a set of images.
 

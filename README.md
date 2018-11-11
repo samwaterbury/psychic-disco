@@ -4,7 +4,8 @@
 
 The goal of this competition was to identify and segment salt deposits in
 underground seismic images. For an overview of the project and my approach, see 
-`project-overview.ipynb`. The official Kaggle page can be found [here](https://www.kaggle.com/c/tgs-salt-identification-challenge).
+`overview.ipynb`. The official Kaggle page can be found 
+[here](https://www.kaggle.com/c/tgs-salt-identification-challenge).
 
 ### Final results
 
@@ -50,7 +51,7 @@ you must install the [Kaggle API](https://github.com/Kaggle/kaggle-api) to
 obtain the data.
 
 Then, clone this repository, run `setup.sh` to obtain the data, and run
-`main.py` to generate predictions.
+`run.py` to generate predictions.
 
 Lastly, you can also adjust the training parameters in the configuration file
-and run `python main.py config.json` to use those settings.
+and run `python run.py config.json` to use those settings.

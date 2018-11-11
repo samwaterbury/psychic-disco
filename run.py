@@ -15,14 +15,14 @@ from sklearn.model_selection import StratifiedKFold, train_test_split
 
 from src.utilities import DEFAULT_PATHS, Logger, encode_predictions
 from src.data import construct_data
-from src.model import CustomResNet, DEFAULT_MODEL_PARAMETERS
+from src.model import CustomResNet
 
 DEFAULT_CONFIG = {
     'paths': DEFAULT_PATHS,
-    'model_parameters': DEFAULT_MODEL_PARAMETERS,
+    'model_parameters': {},
     'use_saved_data': True,
     'use_saved_models': True,
-    'k_folds': 5,
+    'k_folds': 1,
     'holdout_percent': 0.2
 }
 
@@ -44,7 +44,7 @@ def main():
     logfile = os.path.join(output_dir, 'log-{}.log'.format(run_datetime))
     sys.stdout = Logger(logfile)
 
-    train, test = construct_data(config['paths'])
+    train, test = construct_data(config['paths'], config['use_saved_data'])
 
     # Generate K sets of training, validation data from `train`
     train_index_folds = []
@@ -78,14 +78,15 @@ def main():
     # Load or train a model for each fold and make predictions
     model_parameters = config['model_parameters']
     for i, (train_indices, valid_indices) in enumerate(folds, start=1):
-        print('Constructing model {}...'.format(i))
         model_parameters.update({'model_name': 'CustomResNet_{}'.format(i)})
         model = CustomResNet(**model_parameters)
 
         # Load the model weights or train the model
-        if os.path.exists(model.save_path):
+        if config['use_saved_models'] and os.path.exists(model.save_path):
+            print('Found saved copy of model {}; loading it...'.format(i))
             model.load(model.save_path)
         else:
+            print('Beginning model {} training...'.format(i))
             model.train(x_train=train.loc[train_indices, 'image'],
                         y_train=train.loc[train_indices, 'mask'],
                         x_valid=train.loc[valid_indices, 'image'],
