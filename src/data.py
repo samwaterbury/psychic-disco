@@ -127,4 +127,5 @@ def read_image(image_path):
     Returns:
         Numpy array with shape (101, 101, 1) containing pixel values in [0, 1].
     """
-    return np.array(load_img(image_path, grayscale=True)) / 255
+    load_img()
+    return np.array(load_img(image_path, color_mode='grayscale')) / 255

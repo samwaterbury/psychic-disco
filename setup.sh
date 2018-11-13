@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Sets up the project directory for execution, and download the data if needed.
+# Sets up the project directory for execution, and downloads the data if needed.
 # This script will put the project directory in the DEFAULT configuration; see
-# the global variable `DEFAULT_CONFIG` near the start of `run.py`.
+# the global variable `DEFAULT_PATHS` near the start of `utilities.py`.
 #
 # NOTE: Before you can use this script to download the data, you need to install
 #       the Kaggle API. Instructions for doing so can be found here:
@@ -10,7 +10,7 @@
 
 # Make sure we are in the root of the project directory; otherwise exit
 if [ ! ${PWD##*/} = "salt-identification" ]; then
-    echo "This script needs to be run from the data/ directory."
+    echo "This script needs to be run from the project root directory."
     exit 1
 fi
 

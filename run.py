@@ -1,4 +1,4 @@
-"""This file creates the final predictions by running all parts of the project.
+"""This file creates the final predictions by running all steps of the project.
 
 Author: Sam Waterbury
 GitHub: https://github.com/samwaterbury/salt-identification
@@ -28,7 +28,7 @@ DEFAULT_CONFIG = {
 
 
 def main():
-    """Runs all of the steps and saves the final predictions to a file."""
+    """Loads the data, trains/loads the models, and makes the predictions."""
     run_datetime = datetime.now().strftime('%Y%m%d_%I%M%p')
 
     # Get the configuration settings if supplied; otherwise, use the default
@@ -72,13 +72,13 @@ def main():
 
     # Final predictions are made on `x_test` and averaged in `y_test`
     x_test = CustomResNet.process(test['image'])
-    y_test = np.zeros((len(x_test), 101, 101))
+    y_test = np.zeros((x_test.shape[0], 101, 101))
     found_cutoff_values = []
 
     # Load or train a model for each fold and make predictions
     model_parameters = config['model_parameters']
     for i, (train_indices, valid_indices) in enumerate(folds, start=1):
-        model_parameters.update({'model_name': 'CustomResNet_{}'.format(i)})
+        model_parameters['model_name'] = 'CustomResNet_{}'.format(i)
         model = CustomResNet(**model_parameters)
 
         # Load the model weights or train the model
