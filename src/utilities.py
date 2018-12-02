@@ -36,6 +36,7 @@ class Logger(object):
     Args:
         logfile: Filepath to be used or created for the logfile.
     """
+
     def __init__(self, logfile):
         self.stdout = sys.stdout
         self._log = open(logfile, mode='a')
@@ -75,9 +76,9 @@ def get_cutoff(y_scores, y_true):
     predictions, the pixels need to be labeled 0 or 1 based on whether their
     scores are less than or greater than some cutoff value.
 
-    Instead of using a cutoff of 0, this function tests many different potential
-    cutoff points between ln(0.3) and ln(0.7) using validation data and a close
-    approximator of the official competition scoring metric.
+    Instead of using a cutoff of 0, this function tests many different
+    potential cutoff points between ln(0.3) and ln(0.7) using validation data
+    and a close approximator of the official competition scoring metric.
 
     Args:
         y_scores: (101, 101) arrays of pixel scores.
@@ -173,13 +174,13 @@ def lovasz_loss(y_true, y_pred):
     return lovasz_hinge(y_pred, y_true)
 
 
-# ---------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
 # The following code is taken from this repository:
 # https://github.com/bermanmaxim/LovaszSoftmax
 #
 # All credit goes to the original author:
 # Maxim Berman 2018 ESAT-PSI KU Leuven (MIT License)
-# ---------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
 
 
 def lovasz_grad(gt_sorted):
@@ -198,8 +199,8 @@ def lovasz_grad(gt_sorted):
 def lovasz_hinge(logits, labels, per_image=True, ignore=None):
     """
     Binary Lovasz hinge loss
-      logits: [B, H, W] Variable, logits at each pixel (between -\infty and
-        +\infty)
+      logits: [B, H, W] Variable, logits at each pixel (between -infty and
+        +infty)
       labels: [B, H, W] Tensor, binary ground truth masks (0 or 1)
       per_image: compute the loss per image instead of per batch
       ignore: void class id
@@ -213,15 +214,16 @@ def lovasz_hinge(logits, labels, per_image=True, ignore=None):
         losses = tf.map_fn(treat_image, (logits, labels), dtype=tf.float32)
         loss = tf.reduce_mean(losses)
     else:
-        loss = lovasz_hinge_flat(*flatten_binary_scores(logits, labels, ignore))
+        loss = lovasz_hinge_flat(*flatten_binary_scores(
+            logits, labels, ignore))
     return loss
 
 
 def lovasz_hinge_flat(logits, labels):
     """
     Binary Lovasz hinge loss
-      logits: [P] Variable, logits at each prediction (between -\infty and
-        +\infty)
+      logits: [P] Variable, logits at each prediction (between -infty and
+        +infty)
       labels: [P] Tensor, binary ground truth labels (0 or 1)
       ignore: label to ignore
     """

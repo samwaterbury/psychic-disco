@@ -23,8 +23,8 @@ def construct_data(paths=DEFAULT_PATHS, use_saved=True):
 
     Args:
         paths: Dict of paths to get the data files from.
-        use_saved: If False, recreate the data from scratch even if a saved copy
-            of the constructed data already exists.
+        use_saved: If False, recreate the data from scratch even if a saved
+            copy of the constructed data already exists.
 
     Returns:
         `train` and `test` DataFrames containing the following columns:
@@ -45,7 +45,8 @@ def construct_data(paths=DEFAULT_PATHS, use_saved=True):
     saved_test = os.path.join(paths['dir_output'], 'test.pk')
 
     # Load the data if possible
-    if use_saved and os.path.exists(saved_train) and os.path.exists(saved_test):
+    if (os.path.exists(saved_train) and os.path.exists(saved_test)
+            and use_saved):
         print('Found existing saved dataset; loading it...')
         with open(saved_train, mode='rb') as train_file:
             train = pickle.load(train_file)
@@ -64,7 +65,8 @@ def construct_data(paths=DEFAULT_PATHS, use_saved=True):
     # (Training images)
     print('Reading training images...')
     path = paths['dir_train_images'] + '{}.png'
-    train['image'] = [read_image(path.format(img)) for img in tqdm(train.index)]
+    train['image'] = [read_image(path.format(img))
+                      for img in tqdm(train.index)]
 
     # (Training masks)
     print('Reading training masks...')
@@ -77,7 +79,7 @@ def construct_data(paths=DEFAULT_PATHS, use_saved=True):
     test['image'] = [read_image(path.format(img)) for img in tqdm(test.index)]
 
     # Calculate the coverage for the training images
-    # Then, bin the images into discrete classes corresponding to their coverage
+    # Then, bin the images into discrete classes corresponding to coverage
     train['coverage'] = train['mask'].map(np.sum) / pow(101, 2)
     train['cov_class'] = train['coverage'].map(
         lambda cov: np.int(np.ceil(cov * 10)))
@@ -90,9 +92,9 @@ def construct_data(paths=DEFAULT_PATHS, use_saved=True):
         with open(saved_test, mode='wb') as test_file:
             pickle.dump(test, test_file)
     except OSError:
-        print('Could not save the data due to an occasional Python bug on some '
-              'systems. :( If this is happening on macOS, try running on Linux '
-              'instead.')
+        print('Could not save the data due to an occasional Python bug on '
+              'some systems. :( If this is happening on macOS, try running on '
+              'Linux instead.')
 
     return train, test
 

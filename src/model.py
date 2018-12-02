@@ -1,7 +1,7 @@
-"""Implements the custom residual network which uses a U-Net architecture.
+"""Implements the convolutional network for this project.
 
-For more information about this architecture, see the following in the `papers/`
-folder:
+For more information about the architecture of this network, see the following
+in the `papers/` folder:
 
 - Huang et al. (2018): in-depth explanation of residual neural networks
 - Ronneberger et al. (2015): see page 2 for a visualization of a "U-Net"
@@ -30,7 +30,7 @@ from src.utilities import iou_sigmoid, iou_no_sigmoid, lovasz_loss, get_cutoff
 
 DEFAULT_MODEL_PARAMETERS = {
     'model_name': 'CustomResNet',
-    'optimal_cutoff': -0.15,  # Found through testing; approx ~= ln(0.46 / 0.54)
+    'optimal_cutoff': -0.15,  # Found by testing; approx ~= ln(0.46 / 0.54)
     'initial_neurons': 16,
     'kernel_initializer': 'he_normal',
     'dropout_rate': 0.5,
@@ -41,22 +41,22 @@ DEFAULT_MODEL_PARAMETERS = {
     'round2_lr': 0.0005,
     'round3_lr': 0.0001,
     'round1_epochs': 10,  # This is way too few epochs to get good results, but
-    'round2_epochs': 10,  # it will run in a reasonable amount of time and still
-    'round3_epochs': 10   # give a good idea of how it works.
+    'round2_epochs': 10,  # it will run in a reasonable amount of time and
+    'round3_epochs': 10   # still give a good idea of how it works.
 }
 
 
 class CustomResNet(object):
-    """Implements the custom residual network for this project.
+    """Custom convolutional network with a residual "U-Net" architecture.
 
-    This class contains a custom model used for the TGS competition. It takes in
-    image arrays of shape (101, 101, 1), i.e., single channel. Methods are
+    This class contains a custom model used for the TGS competition. It takes
+    in image arrays of shape (101, 101, 1), i.e., single channel. Methods are
     provided for preprocessing, training the model, and making predictions.
 
     `CustomResNet` relies on a set of parameters which can be passed when the
     class is initialized or whenever a method is called.
 
-    Parameters:
+    Parameters (Keyword Args):
         model_name: Name for the model; used when saving model weights.
         optimal_cutoff: Cutoff value to use when making predictions.
         initial_neurons: # of filters at the first convolution output.
@@ -84,9 +84,10 @@ class CustomResNet(object):
             2 - Model has been fitted and the sigmoid output layer is removed.
         optimal_cutoff: The best cutoff value to use when rounding predictions.
     """
+
     def __init__(self, **kwargs):
         self.parameters = DEFAULT_MODEL_PARAMETERS
-        self.parameters.update(**kwargs)
+        self.parameters.update(kwargs)
         self.custom_objects = {
             'lovasz_loss': lovasz_loss,
             'iou_no_sigmoid': iou_no_sigmoid,
@@ -128,7 +129,7 @@ class CustomResNet(object):
 
     @staticmethod
     def process(x):
-        """Flattens a list of arrays so that it can be processed by the network.
+        """Flattens a list of arrays so that it can be used by the network.
 
         Args:
             x: List or Series of n arrays with shape (101, 101).
@@ -278,13 +279,30 @@ class CustomResNet(object):
         # The network takes in images with the shape (101, 101, 1)
         input_layer = Input(shape=(101, 101, 1))
 
-        # Coming up next is the U-Net architecture, which repeatedly applies the
-        # following sequence of transformations:
+        # Coming up next is the U-Net architecture, which consists of a
+        # "downslope" phase, "middle" phase, and "upslope" phase. The following
+        # sequence of transformations are repeatedly applied on the downslope:
+        #
         #   (1) Convolution
-        #   (2) Residual blocks (see the static method `residual_block`)
-        #   (3) Pooling function (this reduces the size of the image)
-        #   (4) Activation function
-        #   (5) Dropout (optional)
+        #   (2) Two residual blocks (see the static method `residual_block`)
+        #   (3) RELU activation function
+        #   (4) Pooling function (this reduces the size of the image)
+        #   (5) Dropout layer
+        #
+        # In the middle, these transformations are performed another time, but
+        # the pooling and dropout layers are skipped. Then, the following
+        # sequence of transformations are repeatedly applied on the upslope:
+        #
+        #   (1) Deconvolution (this increases the size of the image)
+        #   (2) Concatenation with the corresponding layer from the downslope
+        #   (3) Dropout layer
+        #   (4) Convolution
+        #   (5) Two residual blocks
+        #   (6) RELU activation function
+        #
+        # For more info, see Ronneberger et al. (2015) in the `papers/` folder.
+
+        # Downslope portion of the U-Net begins here
 
         # 101 -> 50
         c1 = Conv2D(n_init * 1, (3, 3), padding='same',
@@ -318,17 +336,17 @@ class CustomResNet(object):
         p4 = MaxPooling2D(pool_size=(2, 2))(c4)
         p4 = Dropout(rate=dr)(p4)
 
-        # Middle block skips the pooling function and does not use dropout
+        # Middle portion of the U-Net; the image size does not change here
         cm = Conv2D(n_init * 16, (3, 3), padding='same',
                     kernel_initializer=ki)(p4)
         cm = CustomResNet.residual_block(cm, n_init * 16, False, bn)
         cm = CustomResNet.residual_block(cm, n_init * 16, True, bn)
 
-        # From here on out, the image tensors are growing in size at each block
+        # Upslope portion of the U-Net begins here
 
         # 6 -> 12
-        t4 = Conv2DTranspose(n_init * 8, (3, 3), strides=(2, 2), padding='same',
-                             kernel_initializer=ki)(cm)
+        t4 = Conv2DTranspose(n_init * 8, (3, 3), strides=(2, 2),
+                             padding='same', kernel_initializer=ki)(cm)
         u4 = concatenate([t4, c4])
         u4 = Dropout(rate=dr)(u4)
 
@@ -349,8 +367,8 @@ class CustomResNet(object):
         u3 = CustomResNet.residual_block(u3, n_init * 4, True, bn)
 
         # 25 -> 50
-        t2 = Conv2DTranspose(n_init * 2, (3, 3), strides=(2, 2), padding='same',
-                             kernel_initializer=ki)(u3)
+        t2 = Conv2DTranspose(n_init * 2, (3, 3), strides=(2, 2),
+                             padding='same', kernel_initializer=ki)(u3)
         u2 = concatenate([t2, c2])
         u2 = Dropout(rate=dr)(u2)
 
@@ -380,10 +398,10 @@ class CustomResNet(object):
     def remove_sigmoid(self):
         """Removes the sigmoid activation in the output layer of the network.
 
-        This network is trained in three rounds, using a different loss function
-        in the latter two. After the first round, the sigmoid activation in the
-        output layer must be removed because the second loss function (Lovasz)
-        requires values in (-Inf, Inf) instead of [0, 1].
+        This network is trained in three rounds, using a different loss
+        function in the latter two. After the first round, the sigmoid
+        activation in the output layer must be removed because the second loss
+        function (Lovasz) requires values in (-Inf, Inf) instead of [0, 1].
         """
         if self.stage > 1:
             warnings.warn('The sigmoid output layer has already been removed.')
@@ -445,7 +463,8 @@ class CustomResNet(object):
         layer = CustomResNet.batch_activation(block_input, bn_momentum)
         layer = CustomResNet.convolution_block(layer, filters,
                                                bn_momentum=bn_momentum)
-        layer = CustomResNet.convolution_block(layer, filters, batch_relu=False,
+        layer = CustomResNet.convolution_block(layer, filters,
+                                               batch_relu=False,
                                                bn_momentum=bn_momentum)
         layer = Add()([layer, block_input])
         if use_activation:
